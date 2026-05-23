@@ -1,0 +1,35 @@
+# IDE/local machine
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Temporary working files
+.temp/
+
+# Android local config
+local.properties
+android/local.properties
+
+# Gradle/Android build outputs
+.gradle/
+android/.gradle-home/
+android/.gradle/
+build/
+android/build/
+android/app/build/
+**/build/
+
+# Kotlin/Gradle caches
+.kotlin/
+android/.kotlin/
+
+# Generated packages/reports
+*.apk
+*.aab
+*.ap_
+*.dex
+*.hprof
+
+# Logs
+*.log
