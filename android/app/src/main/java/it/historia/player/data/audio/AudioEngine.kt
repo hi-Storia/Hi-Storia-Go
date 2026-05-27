@@ -8,6 +8,8 @@ interface AudioEngine {
     fun setBackgroundVolumeLevels(fullVolume: Float, duckedVolume: Float)
     fun setBackgroundDucked(ducked: Boolean)
     fun stopBackground()
+    fun playbackPositionMs(): Long
+    fun playbackDurationMs(): Long
     fun setOnPlaybackEnded(listener: (() -> Unit)?)
     fun stop()
     fun release()

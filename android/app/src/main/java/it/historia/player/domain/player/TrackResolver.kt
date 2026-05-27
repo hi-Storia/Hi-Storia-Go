@@ -4,10 +4,14 @@ import it.historia.player.domain.model.PlaybackContext
 
 object TrackResolver {
     fun resolve(trackKey: String, ctx: PlaybackContext): String? {
-        val fileName = trackKey.trim()
-        if (fileName.isBlank()) return null
+        return candidates(trackKey, ctx).firstOrNull()
+    }
 
-        val candidates = linkedSetOf(
+    fun candidates(trackKey: String, ctx: PlaybackContext): List<String> {
+        val fileName = trackKey.trim()
+        if (fileName.isBlank()) return emptyList()
+
+        return linkedSetOf(
             buildGenericPath(fileName),
             buildPath(ctx.deviceId, ctx.profile, ctx.language, fileName),
             buildPath(ctx.deviceId, PlaybackContext.DEFAULT_PROFILE, ctx.language, fileName),
@@ -23,9 +27,7 @@ object TrackResolver {
                 PlaybackContext.DEFAULT_LANGUAGE,
                 fileName
             )
-        )
-
-        return candidates.firstOrNull()
+        ).toList()
     }
 
     private fun buildPath(deviceId: String, profile: String, language: String, fileName: String): String {

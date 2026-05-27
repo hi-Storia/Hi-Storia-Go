@@ -47,6 +47,14 @@ data class UsbConnectionStatus(
     val reason: UsbDisconnectReason? = null
 )
 
+data class UsbIoStatus(
+    val byteCount: Long = 0L,
+    val lastByteAtMs: Long? = null,
+    val lastReadTimeoutAtMs: Long? = null,
+    val readLoopStartedAtMs: Long? = null,
+    val partialLineLength: Int = 0
+)
+
 class UsbSerialManager(
     context: Context,
     private val serialLogBuffer: SerialLogBuffer
@@ -65,6 +73,9 @@ class UsbSerialManager(
         )
     )
     val connectionStatus: StateFlow<UsbConnectionStatus> = _connectionStatus.asStateFlow()
+
+    private val _ioStatus = MutableStateFlow(UsbIoStatus())
+    val ioStatus: StateFlow<UsbIoStatus> = _ioStatus.asStateFlow()
 
     private val lock = Any()
     private var activePort: UsbSerialPort? = null
@@ -126,6 +137,15 @@ class UsbSerialManager(
 
     fun stopUsb(reason: UsbDisconnectReason = UsbDisconnectReason.STOPPED) {
         stopUsbInternal(reason = reason, emitState = true)
+    }
+
+    fun restartUsbConnection() {
+        scope.launch {
+            appendStructuredLog("USB: manual restart requested")
+            stopUsbInternal(reason = UsbDisconnectReason.STOPPED, emitState = true)
+            delay(MANUAL_RESTART_DELAY_MS)
+            startUsbAutoconnect()
+        }
     }
 
     fun sendLine(line: String) {
@@ -247,11 +267,22 @@ class UsbSerialManager(
         readJob?.cancel()
         readJob = scope.launch {
             val buffer = ByteArray(2048)
+            _ioStatus.value = _ioStatus.value.copy(
+                readLoopStartedAtMs = android.os.SystemClock.elapsedRealtime(),
+                lastReadTimeoutAtMs = null,
+                partialLineLength = 0
+            )
             try {
                 while (isActive) {
                     val count = port.read(buffer, READ_TIMEOUT_MS)
                     if (count > 0) {
+                        recordBytesRead(count)
                         emitLinesFromBytes(buffer, count)
+                    } else {
+                        _ioStatus.value = _ioStatus.value.copy(
+                            lastReadTimeoutAtMs = android.os.SystemClock.elapsedRealtime(),
+                            partialLineLength = synchronized(lock) { lineBuffer.length }
+                        )
                     }
                 }
             } catch (error: Throwable) {
@@ -286,9 +317,16 @@ class UsbSerialManager(
                 else -> {
                     lastByteWasCr = false
                     lineBuffer.append(value.toChar())
+                    if (lineBuffer.length > MAX_SERIAL_LINE_CHARS) {
+                        appendStructuredLog("ERR: serial partial line too long, buffer cleared")
+                        lineBuffer.setLength(0)
+                    }
                 }
             }
         }
+        _ioStatus.value = _ioStatus.value.copy(
+            partialLineLength = synchronized(lock) { lineBuffer.length }
+        )
     }
 
     private suspend fun emitBufferedLine() {
@@ -297,6 +335,16 @@ class UsbSerialManager(
         appendStructuredLog("RX: $line")
         _incomingLines.emit(line)
         lineBuffer.setLength(0)
+        _ioStatus.value = _ioStatus.value.copy(partialLineLength = 0)
+    }
+
+    private fun recordBytesRead(count: Int) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        _ioStatus.value = _ioStatus.value.copy(
+            byteCount = _ioStatus.value.byteCount + count,
+            lastByteAtMs = now,
+            partialLineLength = synchronized(lock) { lineBuffer.length }
+        )
     }
 
     private fun handlePermissionResult(intent: Intent) {
@@ -418,6 +466,8 @@ class UsbSerialManager(
         private const val BAUDRATE = 115200
         private const val READ_TIMEOUT_MS = 1000
         private const val WRITE_TIMEOUT_MS = 1000
+        private const val MANUAL_RESTART_DELAY_MS = 2_000L
+        private const val MAX_SERIAL_LINE_CHARS = 4096
         private const val CR = 13
         private const val LF = 10
     }

@@ -22,6 +22,7 @@ import it.historia.player.data.preferences.BackgroundMusicSettingsStore
 import it.historia.player.data.preferences.ExplorationSettingsStore
 import it.historia.player.data.preferences.IdleSettingsStore
 import it.historia.player.data.preferences.PlaybackSelectionStore
+import it.historia.player.data.preferences.PresentationSettingsStore
 import it.historia.player.data.preferences.ProjectSettingsStore
 import it.historia.player.data.preferences.SignalMappingStore
 import it.historia.player.data.usb.UsbSerialManager
@@ -45,6 +46,7 @@ class MainActivity : ComponentActivity() {
             backgroundMusicSettingsStore = BackgroundMusicSettingsStore(applicationContext),
             explorationSettingsStore = ExplorationSettingsStore(applicationContext),
             idleSettingsStore = IdleSettingsStore(applicationContext),
+            presentationSettingsStore = PresentationSettingsStore(applicationContext),
             playbackSelectionStore = PlaybackSelectionStore(applicationContext),
             projectSettingsStore = ProjectSettingsStore(applicationContext),
             signalMappingStore = SignalMappingStore(applicationContext),
@@ -77,6 +79,11 @@ class MainActivity : ComponentActivity() {
                 ) { uri ->
                     connectViewModel.onExplorationAudioFileSelected(uri)
                 }
+                val presentationAudioPicker = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.OpenDocument()
+                ) { uri ->
+                    connectViewModel.onPresentationAudioFileSelected(uri)
+                }
                 val backgroundAudioPicker = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.OpenDocument()
                 ) { uri ->
@@ -91,6 +98,7 @@ class MainActivity : ComponentActivity() {
                         ConnectScreen(
                             state = state.value,
                             onStopClick = connectViewModel::stopPlayback,
+                            onStartPresentationClick = connectViewModel::startPresentation,
                             onStartExplorationClick = connectViewModel::startExplorationMode,
                             onStopExplorationClick = connectViewModel::stopExplorationMode,
                             onProfileSelected = connectViewModel::onProfileSelected,
@@ -127,6 +135,10 @@ class MainActivity : ComponentActivity() {
                             onBackClick = { navController.navigateUp() },
                             onThresholdChanged = connectViewModel::onThresholdChanged,
                             onSendThreshold = connectViewModel::sendSetThreshold,
+                            onResetArduino = connectViewModel::sendArduinoResetFromAdmin,
+                            onRestartTouch = connectViewModel::sendTouchRestartFromAdmin,
+                            onResetBoard = connectViewModel::sendBoardResetFromAdmin,
+                            onRestartUsb = connectViewModel::restartUsbFromAdmin,
                             onPlaySignal = connectViewModel::playSignalFromAdmin,
                             onSignalTrackSelected = connectViewModel::onSignalTrackSelected,
                             onSignalLabelSaved = connectViewModel::onSignalLabelSaved,
@@ -149,6 +161,10 @@ class MainActivity : ComponentActivity() {
                             onImportExplorationTrack = {
                                 explorationAudioPicker.launch(AUDIO_DOCUMENT_MIME_TYPES)
                             },
+                            onImportPresentationTrack = {
+                                presentationAudioPicker.launch(AUDIO_DOCUMENT_MIME_TYPES)
+                            },
+                            onRemovePresentationTrack = connectViewModel::onPresentationTrackRemoved,
                             onImportBackgroundMusic = {
                                 backgroundAudioPicker.launch(AUDIO_DOCUMENT_MIME_TYPES)
                             },

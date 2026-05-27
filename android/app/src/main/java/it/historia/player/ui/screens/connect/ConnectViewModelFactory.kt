@@ -8,6 +8,7 @@ import it.historia.player.data.preferences.BackgroundMusicSettingsStore
 import it.historia.player.data.preferences.ExplorationSettingsStore
 import it.historia.player.data.preferences.IdleSettingsStore
 import it.historia.player.data.preferences.PlaybackSelectionStore
+import it.historia.player.data.preferences.PresentationSettingsStore
 import it.historia.player.data.preferences.ProjectSettingsStore
 import it.historia.player.data.preferences.SignalMappingStore
 import it.historia.player.data.usb.UsbSerialManager
@@ -20,6 +21,7 @@ class ConnectViewModelFactory(
     private val backgroundMusicSettingsStore: BackgroundMusicSettingsStore,
     private val explorationSettingsStore: ExplorationSettingsStore,
     private val idleSettingsStore: IdleSettingsStore,
+    private val presentationSettingsStore: PresentationSettingsStore,
     private val playbackSelectionStore: PlaybackSelectionStore,
     private val projectSettingsStore: ProjectSettingsStore,
     private val signalMappingStore: SignalMappingStore,
@@ -35,6 +37,7 @@ class ConnectViewModelFactory(
                 backgroundMusicSettingsStore = backgroundMusicSettingsStore,
                 explorationSettingsStore = explorationSettingsStore,
                 idleSettingsStore = idleSettingsStore,
+                presentationSettingsStore = presentationSettingsStore,
                 playbackSelectionStore = playbackSelectionStore,
                 projectSettingsStore = projectSettingsStore,
                 signalMappingStore = signalMappingStore,

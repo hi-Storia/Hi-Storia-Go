@@ -11,6 +11,8 @@ import it.historia.player.data.preferences.ExplorationSettings
 import it.historia.player.data.preferences.ExplorationSettingsStore
 import it.historia.player.data.preferences.IdleSettingsStore
 import it.historia.player.data.preferences.PlaybackSelectionStore
+import it.historia.player.data.preferences.PresentationSettings
+import it.historia.player.data.preferences.PresentationSettingsStore
 import it.historia.player.data.preferences.ProjectSettings
 import it.historia.player.data.preferences.ProjectSettingsStore
 import it.historia.player.data.preferences.SignalMappingStore
@@ -94,14 +96,52 @@ data class BackgroundMusicSettingsUi(
     val useDefaultTrack: Boolean = true,
     val customTrackKey: String? = null,
     val onlyDuringTracks: Boolean = false,
-    val fullVolumePercent: Int = 100,
-    val duckedVolumePercent: Int = 8
+    val fullVolumePercent: Float = 100f,
+    val duckedVolumePercent: Float = 8f
 )
 
 data class ExplorationSettingsUi(
     val timeoutMinutes: Int = 3,
     val useDefaultTrack: Boolean = true,
     val customTrackKey: String? = null
+)
+
+data class PresentationSettingsUi(
+    val customTrackKey: String? = null
+)
+
+data class DiagnosticsUi(
+    val appStartedAtMs: Long = 0L,
+    val nowMs: Long = 0L,
+    val bootCount: Int = 0,
+    val lastBootAtMs: Long? = null,
+    val readyCount: Int = 0,
+    val lastReadyAtMs: Long? = null,
+    val touchFreezeCount: Int = 0,
+    val lastTouchFreezeAtMs: Long? = null,
+    val touchRestartCount: Int = 0,
+    val lastTouchRestartAtMs: Long? = null,
+    val boardResetCount: Int = 0,
+    val lastBoardResetAtMs: Long? = null,
+    val usbErrorCount: Int = 0,
+    val lastUsbErrorAtMs: Long? = null,
+    val lastCriticalEvent: String = "",
+    val lastCriticalEventAtMs: Long? = null,
+    val serialByteCount: Long = 0L,
+    val lastSerialByteAtMs: Long? = null,
+    val lastSerialReadTimeoutAtMs: Long? = null,
+    val serialReadLoopStartedAtMs: Long? = null,
+    val serialPartialLineLength: Int = 0,
+    val serialLineCount: Long = 0L,
+    val lastSerialLineAtMs: Long? = null,
+    val lastSerialLine: String = "",
+    val touchEventCount: Long = 0L,
+    val lastTouchAtMs: Long? = null,
+    val lastTouchSignal: Int? = null,
+    val lastUsbStateChangedAtMs: Long? = null,
+    val lastUsbState: UsbConnectionState = UsbConnectionState.DISCONNECTED,
+    val lastArduinoTxAtMs: Long? = null,
+    val lastArduinoTx: String = ""
 )
 
 data class ConnectUiState(
@@ -126,8 +166,12 @@ data class ConnectUiState(
     val idleSettings: IdleSettingsUi = IdleSettingsUi(),
     val backgroundMusicSettings: BackgroundMusicSettingsUi = BackgroundMusicSettingsUi(),
     val explorationSettings: ExplorationSettingsUi = ExplorationSettingsUi(),
+    val presentationSettings: PresentationSettingsUi = PresentationSettingsUi(),
     val isExplorationMode: Boolean = false,
     val isIdlePlaying: Boolean = false,
+    val isPresentationPlaying: Boolean = false,
+    val playbackProgress: Float = 0f,
+    val diagnostics: DiagnosticsUi = DiagnosticsUi(),
     val projectMessage: String? = null,
     val serialLogs: List<String> = emptyList()
 )
@@ -139,6 +183,7 @@ class ConnectViewModel(
     private val backgroundMusicSettingsStore: BackgroundMusicSettingsStore,
     private val explorationSettingsStore: ExplorationSettingsStore,
     private val idleSettingsStore: IdleSettingsStore,
+    private val presentationSettingsStore: PresentationSettingsStore,
     private val playbackSelectionStore: PlaybackSelectionStore,
     private val projectSettingsStore: ProjectSettingsStore,
     private val signalMappingStore: SignalMappingStore,
@@ -149,8 +194,12 @@ class ConnectViewModel(
         language = DeviceCatalog.LANGUAGE_IT
     )
 ) : ViewModel() {
+    private val appStartedAtMs = SystemClock.elapsedRealtime()
     private var idleJob: Job? = null
     private var explorationJob: Job? = null
+    private var playbackProgressJob: Job? = null
+    private var diagnosticsJob: Job? = null
+    private var explorationSignalResetJob: Job? = null
     private var activeBackgroundPath: String? = null
     private val lastExplorationSignalAt = mutableMapOf<Int, Long>()
 
@@ -163,7 +212,12 @@ class ConnectViewModel(
     }
 
     private val _uiState = MutableStateFlow(
-        createInitialState(playbackSelectionStore.loadOrNull() ?: initialPlaybackContext)
+        createInitialState(playbackSelectionStore.loadOrNull() ?: initialPlaybackContext).copy(
+            diagnostics = DiagnosticsUi(
+                appStartedAtMs = appStartedAtMs,
+                nowMs = appStartedAtMs
+            )
+        )
     )
     val uiState: StateFlow<ConnectUiState> = _uiState.asStateFlow()
 
@@ -174,6 +228,16 @@ class ConnectViewModel(
         applyBackgroundMusic(uiState.value)
         scheduleIdlePlayback(uiState.value.idleSettings.timeoutMinutes)
 
+        diagnosticsJob = viewModelScope.launch {
+            while (true) {
+                delay(1_000L)
+                val now = SystemClock.elapsedRealtime()
+                _uiState.update { current ->
+                    current.copy(diagnostics = current.diagnostics.copy(nowMs = now))
+                }
+            }
+        }
+
         viewModelScope.launch {
             serialLogBuffer.linesFlow.collect { lines ->
                 _uiState.update { it.copy(serialLogs = lines) }
@@ -182,6 +246,7 @@ class ConnectViewModel(
 
         viewModelScope.launch {
             usbSerialManager.connectionStatus.collect { status ->
+                val now = SystemClock.elapsedRealtime()
                 _uiState.update { current ->
                     current.copy(
                         usbConnectionState = status.state,
@@ -189,7 +254,43 @@ class ConnectViewModel(
                             UsbConnectionState.DISCONNECTED -> "Collega il totem via USB"
                             UsbConnectionState.WAITING_PERMISSION -> "Autorizza il collegamento USB"
                             UsbConnectionState.CONNECTED -> null
+                        },
+                        diagnostics = current.diagnostics.copy(
+                            nowMs = now,
+                            lastUsbState = status.state,
+                            lastUsbStateChangedAtMs = now
+                        )
+                    ).let { updated ->
+                        if (status.state == UsbConnectionState.DISCONNECTED &&
+                            status.reason == it.historia.player.data.usb.UsbDisconnectReason.ERROR
+                        ) {
+                            updated.copy(
+                                diagnostics = updated.diagnostics.copy(
+                                    usbErrorCount = updated.diagnostics.usbErrorCount + 1,
+                                    lastUsbErrorAtMs = now,
+                                    lastCriticalEvent = "Errore USB",
+                                    lastCriticalEventAtMs = now
+                                )
+                            )
+                        } else {
+                            updated
                         }
+                    }
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            usbSerialManager.ioStatus.collect { status ->
+                _uiState.update { current ->
+                    current.copy(
+                        diagnostics = current.diagnostics.copy(
+                            serialByteCount = status.byteCount,
+                            lastSerialByteAtMs = status.lastByteAtMs,
+                            lastSerialReadTimeoutAtMs = status.lastReadTimeoutAtMs,
+                            serialReadLoopStartedAtMs = status.readLoopStartedAtMs,
+                            serialPartialLineLength = status.partialLineLength
+                        )
                     )
                 }
             }
@@ -202,6 +303,8 @@ class ConnectViewModel(
                     _uiState.update { it.copy(connectionState = ConnectionState.ERROR) }
                 }
                 .collect { line ->
+                    recordSerialLine(line)
+                    recordCriticalSerialEvent(line)
                     val event = ProtocolParser.parse(line)
                     if (event is PlayerEvent.Message) {
                         tryUpdateThresholdFromMessage(event.text)
@@ -235,8 +338,24 @@ class ConnectViewModel(
                 stopExplorationMode()
                 return
             }
+            val state = uiState.value
+            val shouldResetArduino = state.nowPlayingSignal != null ||
+                state.isIdlePlaying ||
+                state.isPresentationPlaying
             audioEngine.stop()
-            _uiState.update { it.copy(nowPlaying = null, nowPlayingSignal = null, isIdlePlaying = false) }
+            stopPlaybackProgressUpdates()
+            _uiState.update {
+                it.copy(
+                    nowPlaying = null,
+                    nowPlayingSignal = null,
+                    isIdlePlaying = false,
+                    isPresentationPlaying = false,
+                    playbackProgress = 0f
+                )
+            }
+            if (shouldResetArduino) {
+                resetArduinoActiveTrack("manual stop")
+            }
             applyBackgroundMusic(uiState.value)
             scheduleIdlePlayback(uiState.value.idleSettings.timeoutMinutes)
         }.onFailure { throwable ->
@@ -245,27 +364,40 @@ class ConnectViewModel(
     }
 
     fun startExplorationMode() {
+        val previousState = uiState.value
+        val shouldResetArduino = previousState.nowPlayingSignal != null ||
+            previousState.isIdlePlaying ||
+            previousState.isPresentationPlaying
         idleJob?.cancel()
         explorationJob?.cancel()
+        explorationSignalResetJob?.cancel()
+        explorationSignalResetJob = null
         lastExplorationSignalAt.clear()
         runCatching {
             audioEngine.stop()
             audioEngine.stopBackground()
+            stopPlaybackProgressUpdates()
             activeBackgroundPath = null
             _uiState.update {
                 it.copy(
                     nowPlaying = null,
                     nowPlayingSignal = null,
                     isIdlePlaying = false,
+                    isPresentationPlaying = false,
                     isExplorationMode = true,
+                    playbackProgress = 0f,
                     userMessage = "Modalita esplorazione attiva"
                 )
+            }
+            if (shouldResetArduino) {
+                resetArduinoActiveTrack("enter exploration")
             }
             val introPath = resolveExplorationIntroPath(uiState.value)
             if (introPath == null) {
                 showProjectMessage("Carica una traccia esplorazione o riattiva quella default.")
             } else {
                 audioEngine.playAsset(introPath)
+                startPlaybackProgressUpdates()
                 appendLog("PLAY: exploration intro -> $introPath")
             }
             explorationJob = viewModelScope.launch {
@@ -280,15 +412,20 @@ class ConnectViewModel(
     fun stopExplorationMode() {
         explorationJob?.cancel()
         explorationJob = null
+        explorationSignalResetJob?.cancel()
+        explorationSignalResetJob = null
         lastExplorationSignalAt.clear()
         runCatching {
             audioEngine.stop()
+            stopPlaybackProgressUpdates()
             _uiState.update {
                 it.copy(
                     nowPlaying = null,
                     nowPlayingSignal = null,
                     isIdlePlaying = false,
+                    isPresentationPlaying = false,
                     isExplorationMode = false,
+                    playbackProgress = 0f,
                     userMessage = null
                 )
             }
@@ -436,6 +573,81 @@ class ConnectViewModel(
         }
     }
 
+    fun onPresentationAudioFileSelected(uri: Uri?) {
+        if (uri == null) return
+        val state = uiState.value
+        val imported = userAudioStore.importPresentationTrack(
+            context = state.selectedContext,
+            sourceUri = uri
+        )
+        if (imported == null) {
+            showProjectMessage("Non sono riuscito a importare la traccia presentazione.")
+            return
+        }
+
+        presentationSettingsStore.save(
+            state.selectedContext,
+            PresentationSettings(customTrackKey = imported.trackKey)
+        )
+        _uiState.update { current ->
+            applyContextSelection(current, current.selectedContext).copy(
+                projectMessage = "Traccia presentazione caricata: ${imported.fileName}."
+            )
+        }
+    }
+
+    fun onPresentationTrackRemoved() {
+        val state = uiState.value
+        presentationSettingsStore.save(state.selectedContext, PresentationSettings())
+        if (state.isPresentationPlaying) {
+            audioEngine.stop()
+        }
+        _uiState.update { current ->
+            applyContextSelection(
+                current.copy(
+                    nowPlaying = null,
+                    nowPlayingSignal = null,
+                    isPresentationPlaying = false
+                ),
+                current.selectedContext
+            ).copy(projectMessage = "Traccia presentazione rimossa.")
+        }
+        applyBackgroundMusic(uiState.value)
+    }
+
+    fun startPresentation() {
+        val state = uiState.value
+        val presentationPath = resolvePresentationPath(state)
+        if (presentationPath == null) {
+            showProjectMessage("Carica una traccia presentazione nei contenuti.")
+            return
+        }
+        val shouldResetArduino = state.nowPlayingSignal != null
+
+        idleJob?.cancel()
+        runCatching {
+            audioEngine.setMainVolume(1f)
+            audioEngine.playAsset(presentationPath)
+            startPlaybackProgressUpdates()
+            _uiState.update {
+                it.copy(
+                    nowPlaying = null,
+                    nowPlayingSignal = null,
+                    isIdlePlaying = false,
+                    isPresentationPlaying = true,
+                    playbackProgress = 0f
+                )
+            }
+            applyBackgroundMusic(uiState.value)
+            if (shouldResetArduino) {
+                resetArduinoActiveTrack("presentation started")
+            }
+            appendLog("PLAY: presentation -> $presentationPath")
+        }.onFailure { throwable ->
+            appendLog("ERR: play presentation ${throwable.message ?: "unknown"}")
+        }
+    }
+
     fun onBackgroundMusicEnabledChanged(enabled: Boolean) {
         val deviceId = uiState.value.selectedContext.deviceId
         val updated = backgroundMusicSettingsStore.load(deviceId).copy(enabled = enabled)
@@ -503,10 +715,10 @@ class ConnectViewModel(
         applyBackgroundMusic(uiState.value)
     }
 
-    fun onBackgroundMusicFullVolumeChanged(percent: Int) {
+    fun onBackgroundMusicFullVolumeChanged(percent: Float) {
         val deviceId = uiState.value.selectedContext.deviceId
         val current = backgroundMusicSettingsStore.load(deviceId)
-        val fullVolume = percent.coerceIn(0, 100)
+        val fullVolume = percent.coerceIn(0f, 100f)
         val updated = current.copy(
             fullVolumePercent = fullVolume,
             duckedVolumePercent = current.duckedVolumePercent.coerceAtMost(fullVolume)
@@ -523,11 +735,11 @@ class ConnectViewModel(
         applyBackgroundMusic(uiState.value)
     }
 
-    fun onBackgroundMusicDuckedVolumeChanged(percent: Int) {
+    fun onBackgroundMusicDuckedVolumeChanged(percent: Float) {
         val deviceId = uiState.value.selectedContext.deviceId
         val current = backgroundMusicSettingsStore.load(deviceId)
         val updated = current.copy(
-            duckedVolumePercent = percent.coerceIn(0, current.fullVolumePercent.coerceIn(0, 100))
+            duckedVolumePercent = percent.coerceIn(0f, current.fullVolumePercent.coerceIn(0f, 100f))
         )
         backgroundMusicSettingsStore.save(deviceId, updated)
         _uiState.update {
@@ -779,7 +991,7 @@ class ConnectViewModel(
             val device = findDeviceOrDefault(current.selectedContext.deviceId)
             projectSettingsStore.reset(device)
             val reapplied = applyContextSelection(current, current.selectedContext)
-                .copy(nowPlaying = null, nowPlayingSignal = null)
+                .copy(nowPlaying = null, nowPlayingSignal = null, isPresentationPlaying = false)
             updatedState = reapplied
             reapplied
         }
@@ -801,10 +1013,28 @@ class ConnectViewModel(
         val value = uiState.value.currentThresholdUi.coerceIn(THRESHOLD_MIN, THRESHOLD_MAX)
         runCatching {
             usbSerialManager.sendLine("SET:$value")
+            recordArduinoTx("SET:$value")
             appendLog("USB: TX SET:$value")
         }.onFailure { throwable ->
             appendLog("ERR: send SET failed ${throwable.message ?: "unknown"}")
         }
+    }
+
+    fun sendArduinoResetFromAdmin() {
+        resetArduinoActiveTrack("admin unlock")
+    }
+
+    fun sendTouchRestartFromAdmin() {
+        sendArduinoCommand("TOUCH:RESTART", "touch restart")
+    }
+
+    fun sendBoardResetFromAdmin() {
+        sendArduinoCommand("BOARD:RESET", "board reset")
+    }
+
+    fun restartUsbFromAdmin() {
+        appendLog("USB: admin restart")
+        usbSerialManager.restartUsbConnection()
     }
 
     fun playSignalFromAdmin(signalIndex: Int) {
@@ -940,6 +1170,7 @@ class ConnectViewModel(
             refreshed.copy(
                 nowPlaying = null,
                 nowPlayingSignal = null,
+                isPresentationPlaying = false,
                 projectMessage = "Caricato ${imported.fileName} e associato a T$signalIndex."
             )
         }
@@ -980,7 +1211,7 @@ class ConnectViewModel(
         audioEngine.stop()
         _uiState.update { current ->
             applyContextSelection(
-                current.copy(nowPlaying = null, nowPlayingSignal = null),
+                current.copy(nowPlaying = null, nowPlayingSignal = null, isPresentationPlaying = false),
                 current.selectedContext
             ).copy(
                 projectMessage = if (hiddenDefault) {
@@ -1012,6 +1243,9 @@ class ConnectViewModel(
     override fun onCleared() {
         idleJob?.cancel()
         explorationJob?.cancel()
+        playbackProgressJob?.cancel()
+        diagnosticsJob?.cancel()
+        explorationSignalResetJob?.cancel()
         audioEngine.setOnPlaybackEnded(null)
         audioEngine.release()
         usbSerialManager.close()
@@ -1019,9 +1253,22 @@ class ConnectViewModel(
     }
 
     private fun onPlaybackEnded() {
+        stopPlaybackProgressUpdates()
         if (uiState.value.isExplorationMode) {
             _uiState.update {
-                it.copy(nowPlaying = null, nowPlayingSignal = null, isIdlePlaying = false)
+                it.copy(
+                    nowPlaying = null,
+                    nowPlayingSignal = null,
+                    isIdlePlaying = false,
+                    isPresentationPlaying = false,
+                    playbackProgress = 1f
+                )
+            }
+            viewModelScope.launch {
+                delay(EXPLORATION_ENDED_RESET_DELAY_MS)
+                if (uiState.value.isExplorationMode) {
+                    resetArduinoActiveTrack("exploration audio ended")
+                }
             }
             return
         }
@@ -1032,23 +1279,59 @@ class ConnectViewModel(
         }
 
         _uiState.update {
-            it.copy(nowPlaying = null, nowPlayingSignal = null, isIdlePlaying = false)
+            it.copy(
+                nowPlaying = null,
+                nowPlayingSignal = null,
+                isIdlePlaying = false,
+                isPresentationPlaying = false,
+                playbackProgress = 0f
+            )
         }
         applyBackgroundMusic(uiState.value)
         scheduleIdlePlayback(uiState.value.idleSettings.timeoutMinutes)
     }
 
     private fun resetArduinoActiveTrack(reason: String) {
+        sendArduinoCommand("Z", "Z ($reason)")
+    }
+
+    private fun sendArduinoCommand(command: String, diagnosticLabel: String) {
         runCatching {
-            usbSerialManager.sendLine("Z")
-            appendLog("USB: TX Z ($reason)")
+            usbSerialManager.sendLine(command)
+            recordArduinoTx(diagnosticLabel)
+            appendLog("USB: TX $diagnosticLabel")
         }.onFailure { throwable ->
-            appendLog("ERR: send Z failed ${throwable.message ?: "unknown"}")
+            appendLog("ERR: send $command failed ${throwable.message ?: "unknown"}")
         }
     }
 
+    private fun startPlaybackProgressUpdates() {
+        playbackProgressJob?.cancel()
+        _uiState.update { it.copy(playbackProgress = 0f) }
+        playbackProgressJob = viewModelScope.launch {
+            while (true) {
+                val duration = audioEngine.playbackDurationMs()
+                val position = audioEngine.playbackPositionMs()
+                val progress = if (duration > 0L) {
+                    (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                _uiState.update { it.copy(playbackProgress = progress) }
+                delay(250)
+            }
+        }
+    }
+
+    private fun stopPlaybackProgressUpdates() {
+        playbackProgressJob?.cancel()
+        playbackProgressJob = null
+    }
+
     private fun applyBackgroundMusic(state: ConnectUiState) {
-        val foregroundPlaying = state.nowPlayingSignal != null || state.isIdlePlaying
+        val foregroundPlaying = state.nowPlayingSignal != null ||
+            state.isIdlePlaying ||
+            state.isPresentationPlaying
         audioEngine.setBackgroundVolumeLevels(
             fullVolume = state.backgroundMusicSettings.fullVolumePercent / 100f,
             duckedVolume = state.backgroundMusicSettings.duckedVolumePercent / 100f
@@ -1095,6 +1378,11 @@ class ConnectViewModel(
         }
     }
 
+    private fun resolvePresentationPath(state: ConnectUiState): String? {
+        return state.presentationSettings.customTrackKey
+            ?.let { userAudioStore.presentationRelativePathFor(state.selectedContext, it) }
+    }
+
     private fun scheduleIdlePlayback(timeoutMinutes: Int) {
         idleJob?.cancel()
         if (uiState.value.isExplorationMode) {
@@ -1109,7 +1397,7 @@ class ConnectViewModel(
 
     private fun playIdleTrack() {
         val state = uiState.value
-        if (state.nowPlayingSignal != null || state.isIdlePlaying) {
+        if (state.nowPlayingSignal != null || state.isIdlePlaying || state.isPresentationPlaying) {
             return
         }
         val idlePath = if (state.idleSettings.useDefaultTrack) {
@@ -1123,11 +1411,14 @@ class ConnectViewModel(
         runCatching {
             audioEngine.setMainVolume(1f)
             audioEngine.playAsset(idlePath)
+            startPlaybackProgressUpdates()
             _uiState.update {
                 it.copy(
                     nowPlaying = null,
                     nowPlayingSignal = null,
-                    isIdlePlaying = true
+                    isIdlePlaying = true,
+                    isPresentationPlaying = false,
+                    playbackProgress = 0f
                 )
             }
             applyBackgroundMusic(uiState.value)
@@ -1142,11 +1433,23 @@ class ConnectViewModel(
         contextBuilder: (ConnectUiState) -> PlaybackContext
     ) {
         var updatedState: ConnectUiState? = null
+        var shouldStopPlayback = false
         _uiState.update { current ->
             val requested = contextBuilder(current)
             val resolved = applyContextSelection(current, requested)
-            val finalState = if (resetNowPlaying) {
-                resolved.copy(nowPlaying = null, nowPlayingSignal = null)
+            val contextChanged = resolved.selectedContext != current.selectedContext
+            val hasForegroundAudio = current.nowPlayingSignal != null ||
+                current.isIdlePlaying ||
+                current.isPresentationPlaying
+            shouldStopPlayback = contextChanged && hasForegroundAudio
+            val finalState = if (resetNowPlaying || shouldStopPlayback) {
+                resolved.copy(
+                    nowPlaying = null,
+                    nowPlayingSignal = null,
+                    isIdlePlaying = false,
+                    isPresentationPlaying = false,
+                    playbackProgress = 0f
+                )
             } else {
                 resolved
             }
@@ -1157,6 +1460,11 @@ class ConnectViewModel(
         updatedState?.let { state ->
             usbSerialManager.setMockMaxTrack(state.maxTrackForSelectedProfile)
             persistSelectedContext(state.selectedContext)
+            if (shouldStopPlayback) {
+                audioEngine.stop()
+                stopPlaybackProgressUpdates()
+                resetArduinoActiveTrack("context changed")
+            }
             applyBackgroundMusic(state)
         }
     }
@@ -1172,7 +1480,7 @@ class ConnectViewModel(
             val shouldStop = reapplied.selectedContext != current.selectedContext ||
                 reapplied.maxTrackForSelectedProfile != current.maxTrackForSelectedProfile
             val finalState = if (shouldStop) {
-                reapplied.copy(nowPlaying = null, nowPlayingSignal = null)
+                reapplied.copy(nowPlaying = null, nowPlayingSignal = null, isPresentationPlaying = false)
             } else {
                 reapplied
             }.copy(projectMessage = null)
@@ -1193,6 +1501,7 @@ class ConnectViewModel(
     private fun onPlayerEvent(event: PlayerEvent) {
         when (event) {
             is PlayerEvent.Touch -> {
+                recordTouchEvent(event.index)
                 if (uiState.value.isExplorationMode) {
                     playExplorationSignal(event.index)
                 } else {
@@ -1219,7 +1528,13 @@ class ConnectViewModel(
         lastExplorationSignalAt[signalIndex] = now
         runCatching {
             audioEngine.playEffectAsset(DEFAULT_EXPLORATION_SIGNAL_ASSET_PATH)
-            resetArduinoActiveTrack("exploration T$signalIndex")
+            explorationSignalResetJob?.cancel()
+            explorationSignalResetJob = viewModelScope.launch {
+                delay(EXPLORATION_ENDED_RESET_DELAY_MS)
+                if (uiState.value.isExplorationMode) {
+                    resetArduinoActiveTrack("exploration T$signalIndex")
+                }
+            }
             appendLog("PLAY: exploration signal T$signalIndex")
         }.onFailure { throwable ->
             appendLog("ERR: exploration signal ${throwable.message ?: "unknown"}")
@@ -1245,8 +1560,7 @@ class ConnectViewModel(
             return
         }
 
-        val context = state.selectedContext
-        val assetPath = TrackResolver.resolve(trackKey = trackKey, ctx = context)
+        val assetPath = resolvePlayableTrackPath(trackKey, state)
         if (assetPath == null) {
             appendLog("ERR: no track resolved for signal=$signalIndex track=$trackKey")
             return
@@ -1255,11 +1569,14 @@ class ConnectViewModel(
         runCatching {
             audioEngine.setMainVolume(resolveVolumeForSignal(signalIndex, state) / 100f)
             audioEngine.playAsset(assetPath)
+            startPlaybackProgressUpdates()
             _uiState.update {
                 it.copy(
                     nowPlaying = signalIndex,
                     nowPlayingSignal = signalIndex,
-                    isIdlePlaying = false
+                    isIdlePlaying = false,
+                    isPresentationPlaying = false,
+                    playbackProgress = 0f
                 )
             }
             applyBackgroundMusic(uiState.value)
@@ -1273,6 +1590,13 @@ class ConnectViewModel(
         val match = THRESHOLD_ACK_REGEX.find(message) ?: return
         val parsed = match.groupValues.getOrNull(1)?.toIntOrNull() ?: return
         onThresholdChanged(parsed)
+    }
+
+    private fun resolvePlayableTrackPath(trackKey: String, state: ConnectUiState): String? {
+        return TrackResolver.candidates(trackKey = trackKey, ctx = state.selectedContext)
+            .firstOrNull { path ->
+                userAudioStore.exists(path) || userAudioStore.assetExists(path)
+            }
     }
 
     private fun createInitialState(initialContext: PlaybackContext): ConnectUiState {
@@ -1289,6 +1613,7 @@ class ConnectViewModel(
         val backgroundMusicSettings = backgroundMusicSettingsStore.load(selectedDevice.deviceId)
         val explorationSettings = explorationSettingsStore.load(selectedDevice.deviceId)
         val explorationTrackSettings = explorationSettingsStore.loadTrackSettings(resolvedContext)
+        val presentationSettings = presentationSettingsStore.load(resolvedContext)
         val projectSettingsUi = buildProjectSettingsUi(selectedDevice, projectSettings)
         val projectProfiles = buildProjectProfiles(selectedDevice, projectSettings)
         val enabledSeries = projectSettings.enabledSeries
@@ -1344,6 +1669,9 @@ class ConnectViewModel(
                 timeoutMinutes = explorationSettings.timeoutMinutes,
                 useDefaultTrack = explorationTrackSettings.useDefaultTrack,
                 customTrackKey = explorationTrackSettings.customTrackKey
+            ),
+            presentationSettings = PresentationSettingsUi(
+                customTrackKey = presentationSettings.customTrackKey
             )
         )
     }
@@ -1404,6 +1732,105 @@ class ConnectViewModel(
 
     private fun appendLog(line: String) {
         serialLogBuffer.append(line)
+    }
+
+    private fun recordCriticalSerialEvent(line: String) {
+        val normalized = line.uppercase(Locale.ROOT)
+        val now = SystemClock.elapsedRealtime()
+        _uiState.update { current ->
+            val diagnostics = current.diagnostics
+            val updated = when {
+                normalized.contains("SISTEMA AVVIATO") -> diagnostics.copy(
+                    bootCount = diagnostics.bootCount + 1,
+                    lastBootAtMs = now,
+                    lastCriticalEvent = "Boot Arduino",
+                    lastCriticalEventAtMs = now
+                )
+                normalized.contains("HI-STORIA READY") -> diagnostics.copy(
+                    readyCount = diagnostics.readyCount + 1,
+                    lastReadyAtMs = now,
+                    lastCriticalEvent = "Arduino ready",
+                    lastCriticalEventAtMs = now
+                )
+                normalized.contains("TOUCH FREEZE STUCK") -> diagnostics.copy(
+                    touchFreezeCount = diagnostics.touchFreezeCount + 1,
+                    lastTouchFreezeAtMs = now,
+                    lastCriticalEvent = "Freeze touch bloccato",
+                    lastCriticalEventAtMs = now
+                )
+                normalized.contains("TOUCH RESTART FREEZE") -> diagnostics.copy(
+                    touchFreezeCount = diagnostics.touchFreezeCount + 1,
+                    lastTouchFreezeAtMs = now,
+                    touchRestartCount = diagnostics.touchRestartCount + 1,
+                    lastTouchRestartAtMs = now,
+                    lastCriticalEvent = "Freeze touch",
+                    lastCriticalEventAtMs = now
+                )
+                normalized.contains("TOUCH RESTART") -> diagnostics.copy(
+                    touchRestartCount = diagnostics.touchRestartCount + 1,
+                    lastTouchRestartAtMs = now,
+                    lastCriticalEvent = "Restart touch",
+                    lastCriticalEventAtMs = now
+                )
+                normalized.contains("BOARD RESET") -> diagnostics.copy(
+                    boardResetCount = diagnostics.boardResetCount + 1,
+                    lastBoardResetAtMs = now,
+                    lastCriticalEvent = "Reset Arduino",
+                    lastCriticalEventAtMs = now
+                )
+                normalized.startsWith("ERR: USB") ||
+                    normalized.contains("USB CONNECT FAILED") ||
+                    normalized.contains("USB READ LOOP TERMINATED") -> diagnostics.copy(
+                        usbErrorCount = diagnostics.usbErrorCount + 1,
+                        lastUsbErrorAtMs = now,
+                        lastCriticalEvent = "Errore USB",
+                        lastCriticalEventAtMs = now
+                    )
+                else -> return@update current
+            }
+            current.copy(diagnostics = updated.copy(nowMs = now))
+        }
+    }
+
+    private fun recordSerialLine(line: String) {
+        val now = SystemClock.elapsedRealtime()
+        _uiState.update { current ->
+            current.copy(
+                diagnostics = current.diagnostics.copy(
+                    nowMs = now,
+                    serialLineCount = current.diagnostics.serialLineCount + 1,
+                    lastSerialLineAtMs = now,
+                    lastSerialLine = line.take(DIAGNOSTIC_LINE_MAX_CHARS)
+                )
+            )
+        }
+    }
+
+    private fun recordTouchEvent(signalIndex: Int) {
+        val now = SystemClock.elapsedRealtime()
+        _uiState.update { current ->
+            current.copy(
+                diagnostics = current.diagnostics.copy(
+                    nowMs = now,
+                    touchEventCount = current.diagnostics.touchEventCount + 1,
+                    lastTouchAtMs = now,
+                    lastTouchSignal = signalIndex
+                )
+            )
+        }
+    }
+
+    private fun recordArduinoTx(command: String) {
+        val now = SystemClock.elapsedRealtime()
+        _uiState.update { current ->
+            current.copy(
+                diagnostics = current.diagnostics.copy(
+                    nowMs = now,
+                    lastArduinoTxAtMs = now,
+                    lastArduinoTx = command.take(DIAGNOSTIC_LINE_MAX_CHARS)
+                )
+            )
+        }
     }
 
     private fun resolveTrackForSignal(signalIndex: Int, state: ConnectUiState): String {
@@ -1628,6 +2055,8 @@ class ConnectViewModel(
         private const val DEFAULT_EXPLORATION_INTRO_ASSET_PATH = "audio/exploration/default/m.wav"
         private const val DEFAULT_EXPLORATION_SIGNAL_ASSET_PATH = "audio/exploration/default/s.wav"
         private const val EXPLORATION_SIGNAL_COOLDOWN_MS = 600L
+        private const val EXPLORATION_ENDED_RESET_DELAY_MS = 2_000L
+        private const val DIAGNOSTIC_LINE_MAX_CHARS = 160
         private val THRESHOLD_ACK_REGEX = Regex(
             pattern = """(?i)^Soglia salvata a\s+(\d+)$"""
         )

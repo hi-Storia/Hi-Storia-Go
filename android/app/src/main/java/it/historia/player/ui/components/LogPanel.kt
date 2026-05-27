@@ -18,7 +18,8 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun LogPanel(
     lines: List<String>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    userScrollEnabled: Boolean = false
 ) {
     val listState = rememberLazyListState()
 
@@ -30,6 +31,7 @@ fun LogPanel(
 
     LazyColumn(
         state = listState,
+        userScrollEnabled = userScrollEnabled,
         modifier = modifier
             .fillMaxWidth()
             .height(320.dp)

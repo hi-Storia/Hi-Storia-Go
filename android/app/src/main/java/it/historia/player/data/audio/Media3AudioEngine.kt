@@ -3,6 +3,7 @@
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -128,6 +129,15 @@ class Media3AudioEngine(context: Context) : AudioEngine {
         }.onFailure { error ->
             Log.e(TAG, "Failed to stop background playback", error)
         }
+    }
+
+    override fun playbackPositionMs(): Long {
+        return player?.currentPosition?.coerceAtLeast(0L) ?: 0L
+    }
+
+    override fun playbackDurationMs(): Long {
+        val duration = player?.duration ?: C.TIME_UNSET
+        return if (duration == C.TIME_UNSET || duration <= 0L) 0L else duration
     }
 
     override fun setOnPlaybackEnded(listener: (() -> Unit)?) {

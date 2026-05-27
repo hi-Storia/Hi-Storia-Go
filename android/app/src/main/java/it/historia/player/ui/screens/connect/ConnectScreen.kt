@@ -37,6 +37,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
@@ -62,6 +64,7 @@ private const val ADMIN_TAP_WINDOW_MS = 2_200L
 fun ConnectScreen(
     state: ConnectUiState,
     onStopClick: () -> Unit,
+    onStartPresentationClick: () -> Unit,
     onStartExplorationClick: () -> Unit,
     onStopExplorationClick: () -> Unit,
     onProfileSelected: (String) -> Unit,
@@ -103,6 +106,7 @@ fun ConnectScreen(
                 HomeControls(
                     state = state,
                     onStopClick = onStopClick,
+                    onStartPresentationClick = onStartPresentationClick,
                     onStartExplorationClick = onStartExplorationClick,
                     onProfileSelected = onProfileSelected,
                     onLanguageSelected = onLanguageSelected,
@@ -128,6 +132,7 @@ fun ConnectScreen(
                 HomeControls(
                     state = state,
                     onStopClick = onStopClick,
+                    onStartPresentationClick = onStartPresentationClick,
                     onStartExplorationClick = onStartExplorationClick,
                     onProfileSelected = onProfileSelected,
                     onLanguageSelected = onLanguageSelected,
@@ -191,6 +196,7 @@ private fun LogoPanel(
 private fun HomeControls(
     state: ConnectUiState,
     onStopClick: () -> Unit,
+    onStartPresentationClick: () -> Unit,
     onStartExplorationClick: () -> Unit,
     onProfileSelected: (String) -> Unit,
     onLanguageSelected: (String) -> Unit,
@@ -243,21 +249,45 @@ private fun HomeControls(
                 onStopClick = onStopClick
             )
 
-            Button(
-                onClick = onStartExplorationClick,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(46.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Highlight,
-                    contentColor = PlayerBackground
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = "Modalita esplorazione",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (state.presentationSettings.customTrackKey != null) {
+                    Button(
+                        onClick = onStartPresentationClick,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.White.copy(alpha = 0.92f),
+                            contentColor = PlayerBackground
+                        )
+                    ) {
+                        Text(
+                            text = "Presentazione",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = onStartExplorationClick,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(46.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Highlight,
+                        contentColor = PlayerBackground
+                    )
+                ) {
+                    Text(
+                        text = "Modalita esplorazione",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
         }
     }
@@ -336,14 +366,25 @@ private fun NowPlayingPanel(
     state: ConnectUiState,
     onStopClick: () -> Unit
 ) {
-    val hasAudio = state.nowPlayingSignal != null || state.isIdlePlaying
+    val hasAudio = state.nowPlayingSignal != null || state.isIdlePlaying || state.isPresentationPlaying
+    val progress = if (hasAudio) state.playbackProgress.coerceIn(0f, 1f) else 0f
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = Color.Black.copy(alpha = 0.18f),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .drawBehind {
+                    if (progress > 0f) {
+                        drawRect(
+                            color = Highlight.copy(alpha = 0.28f),
+                            size = Size(width = size.width * progress, height = size.height)
+                        )
+                    }
+                }
+                .padding(horizontal = 10.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -582,6 +623,9 @@ private fun languageLabel(state: ConnectUiState, language: String): String {
 private fun formatNowPlaying(state: ConnectUiState): String {
     if (state.isIdlePlaying) {
         return "Traccia 0 / idle"
+    }
+    if (state.isPresentationPlaying) {
+        return "Presentazione"
     }
 
     val signal = state.nowPlayingSignal ?: return "In attesa del tocco"

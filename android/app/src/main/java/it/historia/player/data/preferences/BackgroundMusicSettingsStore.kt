@@ -7,8 +7,8 @@ data class BackgroundMusicSettings(
     val useDefaultTrack: Boolean = true,
     val customTrackKey: String? = null,
     val onlyDuringTracks: Boolean = false,
-    val fullVolumePercent: Int = 100,
-    val duckedVolumePercent: Int = 8
+    val fullVolumePercent: Float = 100f,
+    val duckedVolumePercent: Float = 8f
 )
 
 class BackgroundMusicSettingsStore(context: Context) {
@@ -20,25 +20,35 @@ class BackgroundMusicSettingsStore(context: Context) {
             useDefaultTrack = prefs.getBoolean(useDefaultKey(deviceId), true),
             customTrackKey = prefs.getString(customTrackKey(deviceId), null),
             onlyDuringTracks = prefs.getBoolean(onlyDuringTracksKey(deviceId), false),
-            fullVolumePercent = prefs.getInt(fullVolumeKey(deviceId), 100).coerceIn(0, 100),
-            duckedVolumePercent = prefs.getInt(duckedVolumeKey(deviceId), 8).coerceIn(
-                0,
-                prefs.getInt(fullVolumeKey(deviceId), 100).coerceIn(0, 100)
+            fullVolumePercent = readVolume(fullVolumeKey(deviceId), 100f).coerceIn(0f, 100f),
+            duckedVolumePercent = readVolume(duckedVolumeKey(deviceId), 8f).coerceIn(
+                0f,
+                readVolume(fullVolumeKey(deviceId), 100f).coerceIn(0f, 100f)
             )
         )
     }
 
     fun save(deviceId: String, settings: BackgroundMusicSettings) {
-        val fullVolume = settings.fullVolumePercent.coerceIn(0, 100)
-        val duckedVolume = settings.duckedVolumePercent.coerceIn(0, fullVolume)
+        val fullVolume = settings.fullVolumePercent.coerceIn(0f, 100f)
+        val duckedVolume = settings.duckedVolumePercent.coerceIn(0f, fullVolume)
         prefs.edit()
             .putBoolean(enabledKey(deviceId), settings.enabled)
             .putBoolean(useDefaultKey(deviceId), settings.useDefaultTrack)
             .putString(customTrackKey(deviceId), settings.customTrackKey)
             .putBoolean(onlyDuringTracksKey(deviceId), settings.onlyDuringTracks)
-            .putInt(fullVolumeKey(deviceId), fullVolume)
-            .putInt(duckedVolumeKey(deviceId), duckedVolume)
+            .putFloat(fullVolumeKey(deviceId), fullVolume)
+            .putFloat(duckedVolumeKey(deviceId), duckedVolume)
             .apply()
+    }
+
+    private fun readVolume(key: String, defaultValue: Float): Float {
+        return when (val stored = prefs.all[key]) {
+            is Float -> stored
+            is Int -> stored.toFloat()
+            is Long -> stored.toFloat()
+            is String -> stored.toFloatOrNull() ?: defaultValue
+            else -> defaultValue
+        }
     }
 
     private fun enabledKey(deviceId: String): String = "background_enabled:$deviceId"

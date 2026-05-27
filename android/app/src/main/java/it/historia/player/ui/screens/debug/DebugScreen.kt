@@ -2,15 +2,17 @@ package it.historia.player.ui.screens.debug
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -28,6 +30,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -36,13 +39,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import android.app.ActivityManager
+import android.content.Context
+import android.os.Environment
+import android.os.StatFs
+import android.os.SystemClock
+import it.historia.player.data.usb.UsbConnectionState
 import it.historia.player.ui.components.LogPanel
 import it.historia.player.ui.screens.connect.ConnectUiState
 import it.historia.player.ui.screens.connect.SignalTrackMappingUi
 import it.historia.player.ui.screens.connect.UserAudioTrackUi
+import kotlinx.coroutines.delay
+import java.util.Locale
 
 const val DEBUG_SERIAL = true
 
@@ -52,6 +64,10 @@ fun AdminScreen(
     onBackClick: () -> Unit,
     onThresholdChanged: (Int) -> Unit,
     onSendThreshold: () -> Unit,
+    onResetArduino: () -> Unit,
+    onRestartTouch: () -> Unit,
+    onResetBoard: () -> Unit,
+    onRestartUsb: () -> Unit,
     onPlaySignal: (Int) -> Unit,
     onSignalTrackSelected: (Int, String) -> Unit,
     onSignalLabelSaved: (Int, String) -> Unit,
@@ -63,6 +79,8 @@ fun AdminScreen(
     onCleanUnusedAudioTracks: () -> Unit,
     onImportIdleTrack: () -> Unit,
     onImportExplorationTrack: () -> Unit,
+    onImportPresentationTrack: () -> Unit,
+    onRemovePresentationTrack: () -> Unit,
     onImportBackgroundMusic: () -> Unit,
     onIdleTimeoutChanged: (String) -> Unit,
     onIdleUseDefaultTrackChanged: (Boolean) -> Unit,
@@ -70,8 +88,8 @@ fun AdminScreen(
     onBackgroundMusicEnabledChanged: (Boolean) -> Unit,
     onBackgroundMusicUseDefaultChanged: (Boolean) -> Unit,
     onBackgroundMusicOnlyDuringTracksChanged: (Boolean) -> Unit,
-    onBackgroundMusicFullVolumeChanged: (Int) -> Unit,
-    onBackgroundMusicDuckedVolumeChanged: (Int) -> Unit,
+    onBackgroundMusicFullVolumeChanged: (Float) -> Unit,
+    onBackgroundMusicDuckedVolumeChanged: (Float) -> Unit,
     onExplorationTimeoutChanged: (String) -> Unit,
     onProjectMessageDismissed: () -> Unit,
     modifier: Modifier = Modifier
@@ -79,42 +97,18 @@ fun AdminScreen(
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf("Board", "Contenuti", "Smartphone")
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .safeDrawingPadding()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Admin",
-                style = MaterialTheme.typography.titleLarge
-            )
-            Button(onClick = onBackClick) {
-                Text("Back")
-            }
-        }
-
-        TabRow(selectedTabIndex = selectedTab) {
-            tabs.forEachIndexed { index, label ->
-                Tab(
-                    selected = selectedTab == index,
-                    onClick = { selectedTab = index },
-                    text = { Text(label) }
-                )
-            }
-        }
-
+    @Composable
+    fun SelectedSection(sectionModifier: Modifier = Modifier) {
         when (selectedTab) {
             0 -> DeviceAdminSection(
                 state = state,
                 onThresholdChanged = onThresholdChanged,
-                onSendThreshold = onSendThreshold
+                onSendThreshold = onSendThreshold,
+                onResetArduino = onResetArduino,
+                onRestartTouch = onRestartTouch,
+                onResetBoard = onResetBoard,
+                onRestartUsb = onRestartUsb,
+                modifier = sectionModifier
             )
 
             1 -> ContentAdminSection(
@@ -130,12 +124,15 @@ fun AdminScreen(
                 onCleanUnusedAudioTracks = onCleanUnusedAudioTracks,
                 onImportIdleTrack = onImportIdleTrack,
                 onImportExplorationTrack = onImportExplorationTrack,
+                onImportPresentationTrack = onImportPresentationTrack,
+                onRemovePresentationTrack = onRemovePresentationTrack,
                 onImportBackgroundMusic = onImportBackgroundMusic,
                 onIdleUseDefaultTrackChanged = onIdleUseDefaultTrackChanged,
                 onExplorationUseDefaultTrackChanged = onExplorationUseDefaultTrackChanged,
                 onBackgroundMusicEnabledChanged = onBackgroundMusicEnabledChanged,
                 onBackgroundMusicUseDefaultChanged = onBackgroundMusicUseDefaultChanged,
-                onBackgroundMusicOnlyDuringTracksChanged = onBackgroundMusicOnlyDuringTracksChanged
+                onBackgroundMusicOnlyDuringTracksChanged = onBackgroundMusicOnlyDuringTracksChanged,
+                modifier = sectionModifier
             )
 
             2 -> IdleAdminSection(
@@ -143,8 +140,102 @@ fun AdminScreen(
                 onIdleTimeoutChanged = onIdleTimeoutChanged,
                 onBackgroundMusicFullVolumeChanged = onBackgroundMusicFullVolumeChanged,
                 onBackgroundMusicDuckedVolumeChanged = onBackgroundMusicDuckedVolumeChanged,
-                onExplorationTimeoutChanged = onExplorationTimeoutChanged
+                onExplorationTimeoutChanged = onExplorationTimeoutChanged,
+                modifier = sectionModifier
             )
+        }
+    }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .safeDrawingPadding()
+            .padding(16.dp)
+    ) {
+        val landscape = maxWidth > maxHeight
+
+        if (landscape) {
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(176.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Admin",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Button(
+                        onClick = onBackClick,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Back")
+                    }
+                    HorizontalDivider()
+                    tabs.forEachIndexed { index, label ->
+                        if (selectedTab == index) {
+                            Button(
+                                onClick = { selectedTab = index },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(label)
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = { selectedTab = index },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(label)
+                            }
+                        }
+                    }
+                }
+
+                SelectedSection(
+                    sectionModifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                )
+            }
+        } else {
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Admin",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Button(onClick = onBackClick) {
+                        Text("Back")
+                    }
+                }
+
+                TabRow(selectedTabIndex = selectedTab) {
+                    tabs.forEachIndexed { index, label ->
+                        Tab(
+                            selected = selectedTab == index,
+                            onClick = { selectedTab = index },
+                            text = { Text(label) }
+                        )
+                    }
+                }
+
+                SelectedSection(
+                    sectionModifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                )
+            }
         }
     }
 
@@ -166,8 +257,8 @@ fun AdminScreen(
 private fun IdleAdminSection(
     state: ConnectUiState,
     onIdleTimeoutChanged: (String) -> Unit,
-    onBackgroundMusicFullVolumeChanged: (Int) -> Unit,
-    onBackgroundMusicDuckedVolumeChanged: (Int) -> Unit,
+    onBackgroundMusicFullVolumeChanged: (Float) -> Unit,
+    onBackgroundMusicDuckedVolumeChanged: (Float) -> Unit,
     onExplorationTimeoutChanged: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -235,29 +326,68 @@ private fun IdleAdminSection(
         }
 
         Text(
-            text = "Volume massimo: ${state.backgroundMusicSettings.fullVolumePercent}%",
+            text = "Volume massimo: ${formatPercent(state.backgroundMusicSettings.fullVolumePercent)}",
             style = MaterialTheme.typography.bodyMedium
         )
         Slider(
-            value = state.backgroundMusicSettings.fullVolumePercent.toFloat(),
-            onValueChange = { onBackgroundMusicFullVolumeChanged(it.toInt()) },
+            value = state.backgroundMusicSettings.fullVolumePercent,
+            onValueChange = { onBackgroundMusicFullVolumeChanged(snapVolumePercent(it)) },
             valueRange = 0f..100f,
             enabled = state.backgroundMusicSettings.enabled &&
                 !state.backgroundMusicSettings.onlyDuringTracks,
             modifier = Modifier.fillMaxWidth()
         )
+        LowVolumeButtons(
+            enabled = state.backgroundMusicSettings.enabled &&
+                !state.backgroundMusicSettings.onlyDuringTracks,
+            onValueSelected = onBackgroundMusicFullVolumeChanged
+        )
 
         Text(
-            text = "Volume sotto traccia: ${state.backgroundMusicSettings.duckedVolumePercent}%",
+            text = "Volume sotto traccia: ${formatPercent(state.backgroundMusicSettings.duckedVolumePercent)}",
             style = MaterialTheme.typography.bodyMedium
         )
         Slider(
-            value = state.backgroundMusicSettings.duckedVolumePercent.toFloat(),
-            onValueChange = { onBackgroundMusicDuckedVolumeChanged(it.toInt()) },
+            value = state.backgroundMusicSettings.duckedVolumePercent,
+            onValueChange = { onBackgroundMusicDuckedVolumeChanged(snapVolumePercent(it)) },
             valueRange = 0f..100f,
             enabled = state.backgroundMusicSettings.enabled,
             modifier = Modifier.fillMaxWidth()
         )
+        LowVolumeButtons(
+            enabled = state.backgroundMusicSettings.enabled,
+            onValueSelected = onBackgroundMusicDuckedVolumeChanged
+        )
+
+        HorizontalDivider()
+
+        AppDiagnosticsSection(state = state)
+    }
+}
+
+@Composable
+private fun LowVolumeButtons(
+    enabled: Boolean,
+    onValueSelected: (Float) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        listOf(0f, 0.2f, 0.4f, 0.6f, 0.8f, 1f).forEach { value ->
+            OutlinedButton(
+                onClick = { onValueSelected(value) },
+                enabled = enabled,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = formatLowVolumeButtonLabel(value),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
 }
 
@@ -266,6 +396,10 @@ private fun DeviceAdminSection(
     state: ConnectUiState,
     onThresholdChanged: (Int) -> Unit,
     onSendThreshold: () -> Unit,
+    onResetArduino: () -> Unit,
+    onRestartTouch: () -> Unit,
+    onResetBoard: () -> Unit,
+    onRestartUsb: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -319,12 +453,294 @@ private fun DeviceAdminSection(
             }
         }
 
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = onResetArduino,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Invia fine traccia")
+            }
+
+            OutlinedButton(
+                onClick = onRestartUsb,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Riavvia porta USB")
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = onRestartTouch,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Riavvia touch")
+            }
+
+            OutlinedButton(
+                onClick = onResetBoard,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Reset Arduino")
+            }
+        }
+
         if (DEBUG_SERIAL) {
             LogPanel(
                 lines = state.serialLogs,
                 modifier = Modifier.fillMaxWidth()
             )
+
+            SerialDiagnosticsSection(state = state)
         }
+    }
+}
+
+@Composable
+private fun SerialDiagnosticsSection(state: ConnectUiState) {
+    val diagnostics = state.diagnostics
+    val nowMs = rememberElapsedRealtimeTicker()
+    val lastLineAgeMs = diagnostics.lastSerialLineAtMs?.let { nowMs - it }
+    val serialStale = state.usbConnectionState == UsbConnectionState.CONNECTED &&
+        (lastLineAgeMs == null || lastLineAgeMs > SERIAL_STALE_WARNING_MS)
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "Diagnostica seriale",
+            style = MaterialTheme.typography.titleSmall
+        )
+        DebugLine("Stato USB", state.usbConnectionState.toString())
+        DebugLine(
+            "Ultimo cambio USB",
+            formatAgo(nowMs, diagnostics.lastUsbStateChangedAtMs)
+        )
+        DebugLine(
+            "Dati Arduino",
+            formatAgo(nowMs, diagnostics.lastSerialLineAtMs),
+            isWarning = serialStale
+        )
+        DebugLine(
+            "Byte USB",
+            diagnostics.serialByteCount.toString()
+        )
+        DebugLine(
+            "Ultimo byte",
+            formatAgo(nowMs, diagnostics.lastSerialByteAtMs),
+            isWarning = state.usbConnectionState == UsbConnectionState.CONNECTED &&
+                diagnostics.lastSerialByteAtMs != null &&
+                nowMs - diagnostics.lastSerialByteAtMs > SERIAL_STALE_WARNING_MS
+        )
+        DebugLine(
+            "Timeout lettura",
+            formatAgo(nowMs, diagnostics.lastSerialReadTimeoutAtMs)
+        )
+        DebugLine(
+            "Riga parziale",
+            "${diagnostics.serialPartialLineLength} char"
+        )
+        if (diagnostics.lastSerialLine.isNotBlank()) {
+            DebugLine("Valore", diagnostics.lastSerialLine)
+        }
+        DebugLine(
+            "Ultimo evento T",
+            diagnostics.lastTouchSignal?.let {
+                "T$it, ${formatAgo(nowMs, diagnostics.lastTouchAtMs)}"
+            } ?: "mai"
+        )
+        DebugLine(
+            "Ultimo TX",
+            diagnostics.lastArduinoTx.takeIf { it.isNotBlank() }?.let {
+                "$it, ${formatAgo(nowMs, diagnostics.lastArduinoTxAtMs)}"
+            } ?: "mai"
+        )
+        if (serialStale) {
+            Text(
+                text = "USB connessa, ma non arrivano righe complete da Arduino.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+            if (diagnostics.lastSerialByteAtMs != null &&
+                nowMs - diagnostics.lastSerialByteAtMs <= SERIAL_STALE_WARNING_MS
+            ) {
+                Text(
+                    text = "Arrivano byte ma non righe: possibile newline mancante o buffer seriale sporco.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        } else if (state.usbConnectionState == UsbConnectionState.CONNECTED &&
+            diagnostics.lastSerialLineAtMs != null &&
+            diagnostics.lastTouchAtMs == null
+        ) {
+            Text(
+                text = "La seriale riceve dati, ma non sono ancora arrivati eventi T.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        CriticalEventsSection(state = state, nowMs = nowMs)
+    }
+}
+
+@Composable
+private fun CriticalEventsSection(
+    state: ConnectUiState,
+    nowMs: Long
+) {
+    val diagnostics = state.diagnostics
+
+    HorizontalDivider()
+    Text(
+        text = "Eventi critici",
+        style = MaterialTheme.typography.titleSmall
+    )
+    DebugLine(
+        "Ultimo",
+        diagnostics.lastCriticalEvent.takeIf { it.isNotBlank() }?.let {
+            "$it, ${formatAgo(nowMs, diagnostics.lastCriticalEventAtMs)}"
+        } ?: "nessuno"
+    )
+    DebugLine(
+        "Boot Arduino",
+        "${diagnostics.bootCount} - ${formatAgo(nowMs, diagnostics.lastBootAtMs)}"
+    )
+    DebugLine(
+        "Ready",
+        "${diagnostics.readyCount} - ${formatAgo(nowMs, diagnostics.lastReadyAtMs)}"
+    )
+    DebugLine(
+        "Freeze touch",
+        "${diagnostics.touchFreezeCount} - ${formatAgo(nowMs, diagnostics.lastTouchFreezeAtMs)}",
+        isWarning = diagnostics.touchFreezeCount > 0
+    )
+    DebugLine(
+        "Restart touch",
+        "${diagnostics.touchRestartCount} - ${formatAgo(nowMs, diagnostics.lastTouchRestartAtMs)}"
+    )
+    DebugLine(
+        "Reset Arduino",
+        "${diagnostics.boardResetCount} - ${formatAgo(nowMs, diagnostics.lastBoardResetAtMs)}",
+        isWarning = diagnostics.boardResetCount > 0
+    )
+    DebugLine(
+        "Errori USB",
+        "${diagnostics.usbErrorCount} - ${formatAgo(nowMs, diagnostics.lastUsbErrorAtMs)}",
+        isWarning = diagnostics.usbErrorCount > 0
+    )
+}
+
+@Composable
+private fun AppDiagnosticsSection(state: ConnectUiState) {
+    val diagnostics = state.diagnostics
+    val nowMs = rememberElapsedRealtimeTicker()
+    val foreground = when {
+        state.isExplorationMode -> "Esplorazione"
+        state.isPresentationPlaying -> "Presentazione"
+        state.isIdlePlaying -> "Traccia 0"
+        state.nowPlayingSignal != null -> "T${state.nowPlayingSignal}"
+        else -> "Nessun audio"
+    }
+    val background = when {
+        !state.backgroundMusicSettings.enabled -> "OFF"
+        state.backgroundMusicSettings.onlyDuringTracks -> "solo sotto tracce"
+        else -> "continua"
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "Diagnostica app",
+            style = MaterialTheme.typography.titleSmall
+        )
+        DebugLine("App attiva", formatDuration(nowMs - diagnostics.appStartedAtMs))
+        DebugLine("Percorso", state.contextLabel)
+        DebugLine("Audio", foreground)
+        DebugLine("Avanzamento", "${(state.playbackProgress * 100f).toInt().coerceIn(0, 100)}%")
+        DebugLine("Musica", background)
+        DebugLine(
+            "Volumi musica",
+            "${formatPercent(state.backgroundMusicSettings.fullVolumePercent)} / " +
+                formatPercent(state.backgroundMusicSettings.duckedVolumePercent)
+        )
+        DebugLine("Touch ricevuti", diagnostics.touchEventCount.toString())
+        DebugLine(
+            "Ultimo touch",
+            diagnostics.lastTouchSignal?.let {
+                "T$it, ${formatAgo(nowMs, diagnostics.lastTouchAtMs)}"
+            } ?: "mai"
+        )
+        PhoneDiagnosticsSection()
+    }
+}
+
+@Composable
+private fun PhoneDiagnosticsSection() {
+    val context = LocalContext.current
+    var stats by remember { mutableStateOf(readPhoneStats(context)) }
+
+    LaunchedEffect(context) {
+        while (true) {
+            stats = readPhoneStats(context)
+            delay(5_000L)
+        }
+    }
+
+    DebugLine("RAM libera", "${formatBytes(stats.availableRamBytes)} / ${formatBytes(stats.totalRamBytes)}")
+    DebugLine("Heap app", "${formatBytes(stats.usedHeapBytes)} / ${formatBytes(stats.maxHeapBytes)}")
+    DebugLine("Spazio libero", "${formatBytes(stats.availableStorageBytes)} / ${formatBytes(stats.totalStorageBytes)}")
+    DebugLine("CPU", "non disponibile in modo affidabile")
+}
+
+@Composable
+private fun rememberElapsedRealtimeTicker(): Long {
+    var nowMs by remember { mutableStateOf(SystemClock.elapsedRealtime()) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1_000L)
+            nowMs = SystemClock.elapsedRealtime()
+        }
+    }
+
+    return nowMs
+}
+
+@Composable
+private fun DebugLine(
+    label: String,
+    value: String,
+    isWarning: Boolean = false
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(0.38f),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = value,
+            modifier = Modifier.weight(0.62f),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (isWarning) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
@@ -342,6 +758,8 @@ private fun ContentAdminSection(
     onCleanUnusedAudioTracks: () -> Unit,
     onImportIdleTrack: () -> Unit,
     onImportExplorationTrack: () -> Unit,
+    onImportPresentationTrack: () -> Unit,
+    onRemovePresentationTrack: () -> Unit,
     onImportBackgroundMusic: () -> Unit,
     onIdleUseDefaultTrackChanged: (Boolean) -> Unit,
     onExplorationUseDefaultTrackChanged: (Boolean) -> Unit,
@@ -549,6 +967,39 @@ private fun ContentAdminSection(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Carica traccia esplorazione")
+        }
+
+        HorizontalDivider()
+
+        Text(
+            text = "Presentazione",
+            style = MaterialTheme.typography.titleMedium
+        )
+
+        Text(
+            text = state.presentationSettings.customTrackKey ?: "Nessuna traccia di presentazione",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = onImportPresentationTrack,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Carica presentazione")
+            }
+
+            OutlinedButton(
+                onClick = onRemovePresentationTrack,
+                enabled = state.presentationSettings.customTrackKey != null,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Rimuovi")
+            }
         }
 
         HorizontalDivider()
@@ -1121,4 +1572,98 @@ private fun fallbackTrack(trackKey: String, maxTrack: Int): UserAudioTrackUi {
         sourceLabel = "mapping",
         inProjectRange = trackId?.let { it in 1..maxTrack } ?: true
     )
+}
+
+private const val SERIAL_STALE_WARNING_MS = 5_000L
+
+private data class PhoneStats(
+    val availableRamBytes: Long = 0L,
+    val totalRamBytes: Long = 0L,
+    val usedHeapBytes: Long = 0L,
+    val maxHeapBytes: Long = 0L,
+    val availableStorageBytes: Long = 0L,
+    val totalStorageBytes: Long = 0L
+)
+
+private fun snapVolumePercent(value: Float): Float {
+    val clamped = value.coerceIn(0f, 100f)
+    return if (clamped < 1f) {
+        (kotlin.math.round(clamped * 5f) / 5f).coerceIn(0f, 1f)
+    } else {
+        kotlin.math.round(clamped)
+    }
+}
+
+private fun formatPercent(value: Float): String {
+    val snapped = snapVolumePercent(value)
+    return if (snapped < 1f && snapped > 0f) {
+        "${String.format(Locale.US, "%.1f", snapped)}%"
+    } else {
+        "${snapped.toInt()}%"
+    }
+}
+
+private fun formatLowVolumeButtonLabel(value: Float): String {
+    val snapped = snapVolumePercent(value)
+    return when {
+        snapped == 0f -> "0%"
+        snapped < 1f -> ".${(snapped * 10f).toInt()}%"
+        else -> "${snapped.toInt()}%"
+    }
+}
+
+private fun readPhoneStats(context: Context): PhoneStats {
+    val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+    val memoryInfo = ActivityManager.MemoryInfo()
+    activityManager?.getMemoryInfo(memoryInfo)
+
+    val runtime = Runtime.getRuntime()
+    val usedHeap = runtime.totalMemory() - runtime.freeMemory()
+    val statFs = StatFs(Environment.getDataDirectory().absolutePath)
+
+    return PhoneStats(
+        availableRamBytes = memoryInfo.availMem,
+        totalRamBytes = memoryInfo.totalMem,
+        usedHeapBytes = usedHeap,
+        maxHeapBytes = runtime.maxMemory(),
+        availableStorageBytes = statFs.availableBytes,
+        totalStorageBytes = statFs.totalBytes
+    )
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes <= 0L) {
+        return "n/d"
+    }
+    val gib = bytes / (1024.0 * 1024.0 * 1024.0)
+    return if (gib >= 1.0) {
+        "${String.format(Locale.US, "%.1f", gib)} GB"
+    } else {
+        "${bytes / (1024L * 1024L)} MB"
+    }
+}
+
+private fun formatAgo(nowMs: Long, thenMs: Long?): String {
+    if (thenMs == null || thenMs <= 0L) {
+        return "mai"
+    }
+    val elapsed = (nowMs - thenMs).coerceAtLeast(0L)
+    return when {
+        elapsed < 1_500L -> "adesso"
+        elapsed < 60_000L -> "${elapsed / 1_000L} s fa"
+        elapsed < 3_600_000L -> "${elapsed / 60_000L} min fa"
+        else -> "${elapsed / 3_600_000L} h fa"
+    }
+}
+
+private fun formatDuration(durationMs: Long): String {
+    val totalSeconds = (durationMs.coerceAtLeast(0L) / 1_000L)
+    val hours = totalSeconds / 3_600L
+    val minutes = (totalSeconds % 3_600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (hours > 0L) {
+        "${hours}h ${minutes.toString().padStart(2, '0')}m"
+    } else {
+        "${minutes}m ${seconds.toString().padStart(2, '0')}s"
+    }
 }

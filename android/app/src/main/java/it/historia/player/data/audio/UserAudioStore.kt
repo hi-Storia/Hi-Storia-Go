@@ -85,6 +85,28 @@ class UserAudioStore(context: Context) {
         }.getOrNull()
     }
 
+    fun importPresentationTrack(context: PlaybackContext, sourceUri: Uri): UserAudioTrack? {
+        val fileName = uniquePresentationFileNameFor(context, sanitizeFileName(displayNameFor(sourceUri)))
+        val destination = fileFor(presentationRelativePathFor(context, fileName))
+        destination.parentFile?.mkdirs()
+
+        return runCatching {
+            appContext.contentResolver.openInputStream(sourceUri)?.use { input ->
+                destination.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            } ?: return null
+
+            UserAudioTrack(
+                trackKey = fileName,
+                trackId = fileName.trackIdOrNull(),
+                fileName = destination.name,
+                relativePath = presentationRelativePathFor(context, fileName),
+                sourceLabel = SOURCE_USER
+            )
+        }.getOrNull()
+    }
+
     fun importBackgroundTrack(deviceId: String, sourceUri: Uri): UserAudioTrack? {
         val fileName = uniqueBackgroundFileNameFor(deviceId, sanitizeFileName(displayNameFor(sourceUri)))
         val destination = fileFor(backgroundRelativePathFor(deviceId, fileName))
@@ -113,6 +135,10 @@ class UserAudioStore(context: Context) {
 
     fun explorationRelativePathFor(context: PlaybackContext, fileName: String): String {
         return "audio/${context.deviceId}/${context.profile}/${context.language}/exploration/$fileName"
+    }
+
+    fun presentationRelativePathFor(context: PlaybackContext, fileName: String): String {
+        return "audio/${context.deviceId}/${context.profile}/${context.language}/presentation/$fileName"
     }
 
     fun backgroundRelativePathFor(deviceId: String, fileName: String): String {
@@ -202,6 +228,13 @@ class UserAudioStore(context: Context) {
         return fileFor(relativePath).isFile
     }
 
+    fun assetExists(relativePath: String): Boolean {
+        return runCatching {
+            appContext.assets.open(relativePath).use { }
+            true
+        }.getOrDefault(false)
+    }
+
     private fun displayNameFor(uri: Uri): String {
         val fromCursor = runCatching {
             appContext.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
@@ -262,6 +295,20 @@ class UserAudioStore(context: Context) {
         var candidate = requestedFileName
         var index = 2
         while (fileFor(explorationRelativePathFor(context, candidate)).exists()) {
+            val suffix = "-$index"
+            val trimmedBase = base.take((56 - suffix.length).coerceAtLeast(1)).trimEnd(' ', '.', '_')
+            candidate = "$trimmedBase$suffix.$extension"
+            index++
+        }
+        return candidate
+    }
+
+    private fun uniquePresentationFileNameFor(context: PlaybackContext, requestedFileName: String): String {
+        val base = requestedFileName.substringBeforeLast(".")
+        val extension = requestedFileName.substringAfterLast(".", "mp3")
+        var candidate = requestedFileName
+        var index = 2
+        while (fileFor(presentationRelativePathFor(context, candidate)).exists()) {
             val suffix = "-$index"
             val trimmedBase = base.take((56 - suffix.length).coerceAtLeast(1)).trimEnd(' ', '.', '_')
             candidate = "$trimmedBase$suffix.$extension"
