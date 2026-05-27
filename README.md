@@ -113,4 +113,4 @@ See [docs/assets.md](docs/assets.md) before publishing or adding new media files
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+European Union Public Licence v1.2 (EUPL-1.2). See [LICENSE](LICENSE).
