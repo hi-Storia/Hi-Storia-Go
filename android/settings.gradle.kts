@@ -15,5 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "HistoriaPlayer"
+rootProject.name = "HiStoriaGo"
 include(":app")

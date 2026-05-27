@@ -3,7 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 
-// Hi-Storia Player 2026 - Arduino UNO R4 touch board, single-scan variant.
+// Hi-Storia Go - Arduino UNO R4 touch board, single-scan variant.
 // Sends T1..Tn events to the Android player over USB serial.
 const uint8_t pinSensori[] = {2, 3, 8, 9, 11};
 const int numSensori = sizeof(pinSensori) / sizeof(pinSensori[0]);

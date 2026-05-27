@@ -1,6 +1,6 @@
 # Arduino / Touch Board
 
-Hi-Storia Player expects a touch board that sends simple serial events over USB.
+Hi-Storia Go expects a touch board that sends simple serial events over USB.
 
 The current stable test setup is:
 
@@ -80,4 +80,3 @@ If raw values freeze or repeat identically, test:
 5. direct USB connection without splitters or chargers.
 
 The single-scan sketch is currently preferred because it avoids the free-running CTSU behavior that showed freezes during testing.
-

@@ -1,6 +1,6 @@
 # Refurbished Android Smartphones
 
-One goal of Hi-Storia Player 2026 is to reuse older Android smartphones as dedicated audio players.
+One goal of Hi-Storia Go is to reuse older Android smartphones as dedicated audio players.
 
 ## Recommended Characteristics
 
@@ -27,7 +27,7 @@ One goal of Hi-Storia Player 2026 is to reuse older Android smartphones as dedic
 Recommended settings for fixed installations:
 
 - keep screen awake while charging, if available;
-- disable battery optimization for Hi-Storia Player;
+- disable battery optimization for Hi-Storia Go;
 - disable automatic app cleanup;
 - disable lock screen or use kiosk mode where appropriate;
 - fix media volume;
@@ -38,4 +38,3 @@ Recommended settings for fixed installations:
 Older phones can differ significantly in USB OTG behavior. Test the exact phone model and cable/adaptor combination that will be used in the installation.
 
 When possible, prefer a direct and mechanically stable USB connection. Powered splitters can be useful, but must be tested because some combinations change USB enumeration behavior.
-

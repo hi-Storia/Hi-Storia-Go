@@ -8,7 +8,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "it.historia.player"
+        applicationId = "it.historia.go"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

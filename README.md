@@ -1,6 +1,6 @@
-# Hi-Storia Player
+# Hi-Storia Go
 
-Hi-Storia Player is the 2026 mobile Android player for hi-Storia tactile audio devices.
+Hi-Storia Go is the 2026 mobile Android app for hi-Storia tactile audio devices.
 
 The app turns an Android smartphone into the audio player for a tactile cultural-heritage model: an Arduino-compatible board reads capacitive/tactile activators and sends serial events such as `T1`, `T2`, `T3`. The Android app receives those events over USB and plays the audio track associated with each activator.
 
