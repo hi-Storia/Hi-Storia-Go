@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -24,7 +25,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
 import it.historia.player.ui.screens.connect.ConnectUiState
@@ -47,6 +51,12 @@ fun ProjectScreen(
     onLanguageRemoved: (String, String) -> Unit,
     onProjectReset: () -> Unit,
     onProjectMessageDismissed: () -> Unit,
+    transferState: ProjectTransferUiState,
+    onExportProjectClick: () -> Unit,
+    onImportProjectClick: () -> Unit,
+    onImportConfirmed: () -> Unit,
+    onImportCancelled: () -> Unit,
+    onTransferMessageDismissed: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var languageDialogProfileId by remember { mutableStateOf<String?>(null) }
@@ -162,8 +172,23 @@ fun ProjectScreen(
             ) {
                 Text("Reset progetto")
             }
+
+            HorizontalDivider()
+
+            ProjectTransferSection(
+                enabled = !transferState.isBusy,
+                onExportProjectClick = onExportProjectClick,
+                onImportProjectClick = onImportProjectClick
+            )
         }
     }
+
+    ProjectTransferDialogs(
+        state = transferState,
+        onImportConfirmed = onImportConfirmed,
+        onImportCancelled = onImportCancelled,
+        onMessageDismissed = onTransferMessageDismissed
+    )
 
     languageDialogProfileId?.let { profileId ->
         AddLanguageDialog(
@@ -465,4 +490,143 @@ private fun AddProfileDialog(
             }
         }
     )
+}
+
+@Composable
+private fun ProjectTransferSection(
+    enabled: Boolean,
+    onExportProjectClick: () -> Unit,
+    onImportProjectClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text(
+            text = "Trasferimento progetto",
+            style = MaterialTheme.typography.titleMedium
+        )
+        Text(
+            text = "Esporta l'intero progetto (tipologie, lingue, associazioni, impostazioni e audio caricati) " +
+                "in un unico file .historia.zip da importare su un altro smartphone.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Button(
+            onClick = onExportProjectClick,
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Esporta progetto")
+        }
+        Button(
+            onClick = onImportProjectClick,
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Importa progetto")
+        }
+    }
+}
+
+@Composable
+private fun ProjectTransferDialogs(
+    state: ProjectTransferUiState,
+    onImportConfirmed: () -> Unit,
+    onImportCancelled: () -> Unit,
+    onMessageDismissed: () -> Unit
+) {
+    state.busyMessage?.let { busyMessage ->
+        AlertDialog(
+            onDismissRequest = {},
+            properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+            title = { Text("Attendere") },
+            text = {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator()
+                    Text(busyMessage)
+                }
+            },
+            confirmButton = {}
+        )
+        return
+    }
+
+    state.importPreview?.let { preview ->
+        AlertDialog(
+            onDismissRequest = onImportCancelled,
+            title = { Text("Importare il progetto?") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = preview.projectName.ifBlank { "Progetto senza nome" },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (preview.schoolName.isNotBlank()) {
+                        Text(preview.schoolName, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    preview.details.forEach { line ->
+                        Text(line, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text("Tipologie e lingue", style = MaterialTheme.typography.labelLarge)
+                    preview.profiles.forEach { line ->
+                        Text(line, style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (preview.warnings.isNotEmpty()) {
+                        Text(
+                            "Avvisi",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        preview.warnings.forEach { line ->
+                            Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    Text(
+                        text = "Il progetto corrente verrà sostituito integralmente, compresi i file audio caricati. " +
+                            "Se vuoi conservarlo, annulla ed esportalo prima.",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onImportConfirmed) {
+                    Text("Sostituisci progetto")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onImportCancelled) {
+                    Text("Annulla")
+                }
+            }
+        )
+        return
+    }
+
+    state.message?.let { message ->
+        AlertDialog(
+            onDismissRequest = onMessageDismissed,
+            title = {
+                Text(
+                    text = message.title,
+                    color = if (message.isError) MaterialTheme.colorScheme.error else Color.Unspecified
+                )
+            },
+            text = { Text(message.text) },
+            confirmButton = {
+                TextButton(onClick = onMessageDismissed) {
+                    Text("OK")
+                }
+            }
+        )
+    }
 }

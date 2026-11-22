@@ -53,6 +53,34 @@ class IdleSettingsStore(context: Context) {
         editor.apply()
     }
 
+    /** Chiavi di questo store che appartengono al progetto [deviceId]. */
+    fun projectSection(deviceId: String): ProjectPreferenceSection {
+        val devicePrefix = "${keyPrefix(deviceId)}."
+        val seriesPrefix = "series.$deviceId:"
+        return ProjectPreferenceSection(PREFS_NAME, prefs) { key ->
+            key.startsWith(devicePrefix) || key.startsWith(seriesPrefix)
+        }
+    }
+
+    /** Sostituisce timeout e tracce idle di tutte le serie del progetto con un unico commit. */
+    fun replaceProject(
+        deviceId: String,
+        settings: IdleSettings,
+        trackSettings: Map<PlaybackContext, IdleTrackSettings>
+    ): Boolean {
+        val entries = linkedMapOf<String, Any?>(
+            "${keyPrefix(deviceId)}.timeout_minutes" to
+                settings.timeoutMinutes.coerceIn(MIN_TIMEOUT_MINUTES, MAX_TIMEOUT_MINUTES)
+        )
+        trackSettings.forEach { (context, track) ->
+            require(context.deviceId == deviceId) { "Serie di un altro progetto: $context" }
+            val prefix = trackKeyPrefix(context)
+            entries["$prefix.use_default_track"] = track.useDefaultTrack
+            track.customTrackKey?.takeIf { it.isNotBlank() }?.let { entries["$prefix.custom_track_key"] = it }
+        }
+        return projectSection(deviceId).replaceAll(entries)
+    }
+
     companion object {
         private const val PREFS_NAME = "historia_idle_settings_prefs"
         const val MIN_TIMEOUT_MINUTES = 1

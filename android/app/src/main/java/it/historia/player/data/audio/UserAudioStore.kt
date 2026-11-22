@@ -3,6 +3,7 @@ package it.historia.player.data.audio
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import it.historia.player.data.preferences.ProjectPreferenceSection
 import it.historia.player.domain.model.PlaybackContext
 import java.io.File
 import java.util.Locale
@@ -177,6 +178,32 @@ class UserAudioStore(context: Context) {
         prefs.edit()
             .putStringSet(key, updated)
             .apply()
+    }
+
+    /** Tracce standard dell'APK nascoste dall'utente nella serie [context]. */
+    fun loadHiddenAssetTracks(context: PlaybackContext): Set<String> {
+        return prefs.getStringSet(hiddenAssetsKeyFor(context), null).orEmpty().toSet()
+    }
+
+    /** Chiavi di questo store che appartengono al progetto [deviceId]. */
+    fun projectSection(deviceId: String): ProjectPreferenceSection {
+        val prefix = "hidden_assets:$deviceId:"
+        return ProjectPreferenceSection(PREFS_NAME, prefs) { key -> key.startsWith(prefix) }
+    }
+
+    /** Sostituisce le tracce standard nascoste di tutte le serie del progetto con un unico commit. */
+    fun replaceHiddenAssetTracks(deviceId: String, hiddenTracks: Map<PlaybackContext, Set<String>>): Boolean {
+        val entries = linkedMapOf<String, Any?>()
+        hiddenTracks.forEach { (context, tracks) ->
+            require(context.deviceId == deviceId) { "Serie di un altro progetto: $context" }
+            if (tracks.isNotEmpty()) entries[hiddenAssetsKeyFor(context)] = tracks.toSet()
+        }
+        return projectSection(deviceId).replaceAll(entries)
+    }
+
+    /** Cartella privata che contiene tutti gli audio caricati dall'utente per il progetto [deviceId]. */
+    fun projectAudioDir(deviceId: String): File {
+        return File(appContext.filesDir, "audio/$deviceId")
     }
 
     private fun listUserTracks(context: PlaybackContext): List<UserAudioTrack> {

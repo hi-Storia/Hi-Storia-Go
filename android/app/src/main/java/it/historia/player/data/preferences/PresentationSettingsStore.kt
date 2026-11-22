@@ -28,6 +28,24 @@ class PresentationSettingsStore(context: Context) {
         editor.apply()
     }
 
+    /** Chiavi di questo store che appartengono al progetto [deviceId]. */
+    fun projectSection(deviceId: String): ProjectPreferenceSection {
+        val seriesPrefix = "series.$deviceId:"
+        return ProjectPreferenceSection(PREFS_NAME, prefs) { key -> key.startsWith(seriesPrefix) }
+    }
+
+    /** Sostituisce le tracce di presentazione di tutte le serie del progetto con un unico commit. */
+    fun replaceProject(deviceId: String, settings: Map<PlaybackContext, PresentationSettings>): Boolean {
+        val entries = linkedMapOf<String, Any?>()
+        settings.forEach { (context, presentation) ->
+            require(context.deviceId == deviceId) { "Serie di un altro progetto: $context" }
+            presentation.customTrackKey?.takeIf { it.isNotBlank() }?.let {
+                entries["${keyPrefix(context)}.custom_track_key"] = it
+            }
+        }
+        return projectSection(deviceId).replaceAll(entries)
+    }
+
     private fun keyPrefix(context: PlaybackContext): String {
         return "series.${context.deviceId}:${context.profile}:${context.language}:presentation"
     }

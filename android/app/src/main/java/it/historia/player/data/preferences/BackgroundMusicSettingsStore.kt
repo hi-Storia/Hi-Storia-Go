@@ -41,6 +41,35 @@ class BackgroundMusicSettingsStore(context: Context) {
             .apply()
     }
 
+    /** Chiavi di questo store che appartengono al progetto [deviceId]. */
+    fun projectSection(deviceId: String): ProjectPreferenceSection {
+        val keys = setOf(
+            enabledKey(deviceId),
+            useDefaultKey(deviceId),
+            customTrackKey(deviceId),
+            onlyDuringTracksKey(deviceId),
+            fullVolumeKey(deviceId),
+            duckedVolumeKey(deviceId)
+        )
+        return ProjectPreferenceSection(PREFS_NAME, prefs) { key -> key in keys }
+    }
+
+    /** Sostituisce le impostazioni della musica di sottofondo con un unico commit sincrono. */
+    fun replaceProject(deviceId: String, settings: BackgroundMusicSettings): Boolean {
+        val fullVolume = settings.fullVolumePercent.coerceIn(0f, 100f)
+        val duckedVolume = settings.duckedVolumePercent.coerceIn(0f, fullVolume)
+        return projectSection(deviceId).replaceAll(
+            linkedMapOf(
+                enabledKey(deviceId) to settings.enabled,
+                useDefaultKey(deviceId) to settings.useDefaultTrack,
+                customTrackKey(deviceId) to settings.customTrackKey?.takeIf { it.isNotBlank() },
+                onlyDuringTracksKey(deviceId) to settings.onlyDuringTracks,
+                fullVolumeKey(deviceId) to fullVolume,
+                duckedVolumeKey(deviceId) to duckedVolume
+            )
+        )
+    }
+
     private fun readVolume(key: String, defaultValue: Float): Float {
         return when (val stored = prefs.all[key]) {
             is Float -> stored

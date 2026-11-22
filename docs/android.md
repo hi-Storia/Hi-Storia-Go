@@ -49,6 +49,21 @@ android/app/src/main/assets/audio/
 
 Public releases should only include neutral default assets. Project-specific audio should be imported on the target device or distributed separately.
 
+## Project Transfer
+
+`Progetto` → `Esporta progetto` / `Importa progetto` saves the whole project (profiles, languages,
+series, mappings, labels, volumes, idle/exploration/presentation/background settings and imported
+audio) into a single `nome-progetto.historia.zip` file and restores it on another phone through the
+Storage Access Framework. Format, safety checks, rollback strategy and manual test steps are
+described in [project-transfer.md](project-transfer.md).
+
+Unit tests (Robolectric) can be run with:
+
+```powershell
+cd android
+.\gradlew.bat :app:testDebugUnitTest
+```
+
 ## Release Notes
 
 Current public version:

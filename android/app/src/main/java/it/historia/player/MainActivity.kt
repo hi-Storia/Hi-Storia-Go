@@ -25,6 +25,9 @@ import it.historia.player.data.preferences.PlaybackSelectionStore
 import it.historia.player.data.preferences.PresentationSettingsStore
 import it.historia.player.data.preferences.ProjectSettingsStore
 import it.historia.player.data.preferences.SignalMappingStore
+import it.historia.player.data.project.ProjectArchiveFormat
+import it.historia.player.data.project.ProjectDocumentAccess
+import it.historia.player.data.project.ProjectTransferManager
 import it.historia.player.data.usb.UsbSerialManager
 import it.historia.player.data.util.SerialLogBuffer
 import it.historia.player.ui.screens.connect.ConnectScreen
@@ -32,6 +35,8 @@ import it.historia.player.ui.screens.connect.ConnectViewModel
 import it.historia.player.ui.screens.connect.ConnectViewModelFactory
 import it.historia.player.ui.screens.debug.AdminScreen
 import it.historia.player.ui.screens.project.ProjectScreen
+import it.historia.player.ui.screens.project.ProjectTransferViewModel
+import it.historia.player.ui.screens.project.ProjectTransferViewModelFactory
 
 private val AUDIO_DOCUMENT_MIME_TYPES = arrayOf("audio/*", "application/octet-stream")
 
@@ -54,6 +59,14 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private val projectTransferViewModel: ProjectTransferViewModel by viewModels {
+        ProjectTransferViewModelFactory(
+            manager = ProjectTransferManager.create(applicationContext),
+            documents = ProjectDocumentAccess(applicationContext.contentResolver),
+            host = connectViewModel
+        )
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -62,6 +75,17 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 val navController = rememberNavController()
                 val state = connectViewModel.uiState.collectAsStateWithLifecycle()
+                val transferState = projectTransferViewModel.uiState.collectAsStateWithLifecycle()
+                val projectExportPicker = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.CreateDocument(ProjectArchiveFormat.MIME_TYPE)
+                ) { uri ->
+                    projectTransferViewModel.onExportDestinationSelected(uri)
+                }
+                val projectImportPicker = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.OpenDocument()
+                ) { uri ->
+                    projectTransferViewModel.onImportArchiveSelected(uri)
+                }
                 var pendingImportTrackId by remember { mutableIntStateOf(0) }
                 val audioPicker = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.OpenDocument()
@@ -126,7 +150,22 @@ class MainActivity : ComponentActivity() {
                             onProfileRemoved = connectViewModel::onProjectProfileRemoved,
                             onLanguageRemoved = connectViewModel::onProjectLanguageRemoved,
                             onProjectReset = connectViewModel::onProjectReset,
-                            onProjectMessageDismissed = connectViewModel::onProjectMessageDismissed
+                            onProjectMessageDismissed = connectViewModel::onProjectMessageDismissed,
+                            transferState = transferState.value,
+                            onExportProjectClick = {
+                                val fileName = ProjectArchiveFormat.suggestedFileName(
+                                    state.value.projectSettings.culturalAssetName
+                                )
+                                runCatching { projectExportPicker.launch(fileName) }
+                                    .onFailure { projectTransferViewModel.onDocumentPickerUnavailable() }
+                            },
+                            onImportProjectClick = {
+                                runCatching { projectImportPicker.launch(ProjectArchiveFormat.OPEN_MIME_TYPES) }
+                                    .onFailure { projectTransferViewModel.onDocumentPickerUnavailable() }
+                            },
+                            onImportConfirmed = projectTransferViewModel::onImportConfirmed,
+                            onImportCancelled = projectTransferViewModel::onImportCancelled,
+                            onTransferMessageDismissed = projectTransferViewModel::onMessageDismissed
                         )
                     }
                     composable("debug") {

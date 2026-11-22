@@ -3,6 +3,8 @@
 Before publishing a public release:
 
 - [ ] Build `:app:assembleDebug`.
+- [ ] Run `:app:testDebugUnitTest`.
+- [ ] Export a project on one phone and import it on another (see `docs/project-transfer.md`).
 - [ ] Verify no build outputs are tracked.
 - [ ] Verify `.temp/` is not tracked.
 - [ ] Verify no private test audio is tracked.

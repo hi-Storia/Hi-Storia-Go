@@ -21,11 +21,13 @@ import it.historia.player.data.usb.UsbSerialManager
 import it.historia.player.data.util.SerialLogBuffer
 import it.historia.player.domain.model.PlaybackContext
 import it.historia.player.domain.model.PlayerEvent
+import it.historia.player.domain.player.DefaultAudioAssets
 import it.historia.player.domain.player.DeviceCatalog
 import it.historia.player.domain.player.DeviceDefinition
 import it.historia.player.domain.player.DeviceProfileDefinition
 import it.historia.player.domain.player.TrackResolver
 import it.historia.player.domain.protocol.ProtocolParser
+import it.historia.player.ui.screens.project.ProjectReplacementHost
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -193,7 +195,7 @@ class ConnectViewModel(
         profile = DeviceCatalog.PROFILE_ADULT,
         language = DeviceCatalog.LANGUAGE_IT
     )
-) : ViewModel() {
+) : ViewModel(), ProjectReplacementHost {
     private val appStartedAtMs = SystemClock.elapsedRealtime()
     private var idleJob: Job? = null
     private var explorationJob: Job? = null
@@ -202,6 +204,8 @@ class ConnectViewModel(
     private var explorationSignalResetJob: Job? = null
     private var activeBackgroundPath: String? = null
     private val lastExplorationSignalAt = mutableMapOf<Int, Long>()
+    /** Vero mentre il progetto viene sostituito da un'importazione: nessuna riproduzione. */
+    private var projectReplacementInProgress = false
 
     private val deviceOptions: List<DeviceOptionUi> = DeviceCatalog.devices.map {
         DeviceOptionUi(
@@ -364,6 +368,7 @@ class ConnectViewModel(
     }
 
     fun startExplorationMode() {
+        if (projectReplacementInProgress) return
         val previousState = uiState.value
         val shouldResetArduino = previousState.nowPlayingSignal != null ||
             previousState.isIdlePlaying ||
@@ -616,6 +621,7 @@ class ConnectViewModel(
     }
 
     fun startPresentation() {
+        if (projectReplacementInProgress) return
         val state = uiState.value
         val presentationPath = resolvePresentationPath(state)
         if (presentationPath == null) {
@@ -1240,6 +1246,72 @@ class ConnectViewModel(
         }
     }
 
+    override val currentProjectDeviceId: String
+        get() = uiState.value.selectedContext.deviceId
+
+    /**
+     * Arresta in sicurezza ogni riproduzione e i timer (idle, esplorazione) prima che
+     * un'importazione sostituisca file e impostazioni del progetto.
+     */
+    override fun prepareForProjectReplacement() {
+        projectReplacementInProgress = true
+        val state = uiState.value
+        val shouldResetArduino = state.nowPlayingSignal != null ||
+            state.isIdlePlaying ||
+            state.isPresentationPlaying ||
+            state.isExplorationMode
+        idleJob?.cancel()
+        explorationJob?.cancel()
+        explorationJob = null
+        explorationSignalResetJob?.cancel()
+        explorationSignalResetJob = null
+        lastExplorationSignalAt.clear()
+        stopPlaybackProgressUpdates()
+        runCatching {
+            audioEngine.stop()
+            audioEngine.stopBackground()
+        }.onFailure { throwable ->
+            appendLog("ERR: stop before import ${throwable.message ?: "unknown"}")
+        }
+        activeBackgroundPath = null
+        _uiState.update {
+            it.copy(
+                nowPlaying = null,
+                nowPlayingSignal = null,
+                isIdlePlaying = false,
+                isPresentationPlaying = false,
+                isExplorationMode = false,
+                playbackProgress = 0f
+            )
+        }
+        if (shouldResetArduino) {
+            resetArduinoActiveTrack("project import")
+        }
+        appendLog("PROJECT: playback stopped for import")
+    }
+
+    /** Ricarica il progetto dagli store (importato o ripristinato) e riattiva il player. */
+    override fun onProjectReplacementFinished() {
+        projectReplacementInProgress = false
+        _uiState.update { current ->
+            applyContextSelection(current, current.selectedContext).copy(
+                nowPlaying = null,
+                nowPlayingSignal = null,
+                isIdlePlaying = false,
+                isPresentationPlaying = false,
+                isExplorationMode = false,
+                playbackProgress = 0f,
+                projectMessage = null
+            )
+        }
+        val state = uiState.value
+        usbSerialManager.setMockMaxTrack(state.maxTrackForSelectedProfile)
+        persistSelectedContext(state.selectedContext)
+        applyBackgroundMusic(state)
+        scheduleIdlePlayback(state.idleSettings.timeoutMinutes)
+        appendLog("PROJECT: reloaded ${formatContextLabel(state.selectedContext)}")
+    }
+
     override fun onCleared() {
         idleJob?.cancel()
         explorationJob?.cancel()
@@ -1396,6 +1468,7 @@ class ConnectViewModel(
     }
 
     private fun playIdleTrack() {
+        if (projectReplacementInProgress) return
         val state = uiState.value
         if (state.nowPlayingSignal != null || state.isIdlePlaying || state.isPresentationPlaying) {
             return
@@ -1514,6 +1587,7 @@ class ConnectViewModel(
     }
 
     private fun playExplorationSignal(signalIndex: Int) {
+        if (projectReplacementInProgress) return
         val state = uiState.value
         if (signalIndex !in 1..state.maxTrackForSelectedProfile) {
             return
@@ -1543,6 +1617,10 @@ class ConnectViewModel(
 
     private fun playSignal(signalIndex: Int) {
         idleJob?.cancel()
+        if (projectReplacementInProgress) {
+            appendLog("PLAY: ignored T$signalIndex during project import")
+            return
+        }
         val state = uiState.value
         if (signalIndex !in 1..state.maxTrackForSelectedProfile) {
             appendLog("ERR: signal out of range T$signalIndex")
@@ -2050,10 +2128,10 @@ class ConnectViewModel(
         private const val THRESHOLD_MAX = 20000
         private const val MIN_TRACK_VOLUME_PERCENT = 10
         private const val MAX_TRACK_VOLUME_PERCENT = 100
-        private const val DEFAULT_IDLE_ASSET_PATH = "audio/idle/default/idle.mp3"
-        private const val DEFAULT_BACKGROUND_ASSET_PATH = "audio/background/default/santelena.mp3"
-        private const val DEFAULT_EXPLORATION_INTRO_ASSET_PATH = "audio/exploration/default/m.wav"
-        private const val DEFAULT_EXPLORATION_SIGNAL_ASSET_PATH = "audio/exploration/default/s.wav"
+        private const val DEFAULT_IDLE_ASSET_PATH = DefaultAudioAssets.IDLE
+        private const val DEFAULT_BACKGROUND_ASSET_PATH = DefaultAudioAssets.BACKGROUND
+        private const val DEFAULT_EXPLORATION_INTRO_ASSET_PATH = DefaultAudioAssets.EXPLORATION_INTRO
+        private const val DEFAULT_EXPLORATION_SIGNAL_ASSET_PATH = DefaultAudioAssets.EXPLORATION_SIGNAL
         private const val EXPLORATION_SIGNAL_COOLDOWN_MS = 600L
         private const val EXPLORATION_ENDED_RESET_DELAY_MS = 2_000L
         private const val DIAGNOSTIC_LINE_MAX_CHARS = 160

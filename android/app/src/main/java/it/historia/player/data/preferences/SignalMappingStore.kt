@@ -3,25 +3,26 @@ package it.historia.player.data.preferences
 import android.content.Context
 import it.historia.player.domain.model.PlaybackContext
 
+/** Associazioni, etichette e volumi di una singola serie. */
+data class SignalSeriesData(
+    val mappings: Map<Int, String>,
+    val labels: Map<Int, String>,
+    val volumes: Map<Int, Int>
+)
+
 class SignalMappingStore(context: Context) {
     private val appContext = context.applicationContext
     private val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun load(context: PlaybackContext, maxSignal: Int): Map<Int, String> {
-        val stored = prefs.getString(keyFor(context), null)
-        val parsed = stored
-            ?.split(",")
-            .orEmpty()
-            .mapNotNull { entry ->
-                val signal = entry.substringBefore(":", missingDelimiterValue = "").toIntOrNull()
-                val track = entry.substringAfter(":", missingDelimiterValue = "")
-                    .takeIf { it.isNotBlank() }
-                    ?.let { normalizeTrackKey(it) }
-                if (signal == null || track == null) null else signal to track
-            }
-            .toMap()
-
+        val parsed = parseMappings(prefs.getString(keyFor(context), null))
         return defaultMapping(maxSignal) + parsed.filterKeys { it in 1..maxSignal }
+    }
+
+    /** Solo le associazioni memorizzate esplicitamente (senza i default), su tutto l'intervallo ammesso. */
+    fun loadStoredMappings(context: PlaybackContext): Map<Int, String> {
+        return parseMappings(prefs.getString(keyFor(context), null))
+            .filterKeys { it in 1..MAX_SIGNAL }
     }
 
     fun loadLabels(context: PlaybackContext, maxTrack: Int): Map<Int, String> {
@@ -59,16 +60,8 @@ class SignalMappingStore(context: Context) {
     }
 
     fun save(context: PlaybackContext, mappings: Map<Int, String>, maxSignal: Int) {
-        val sanitized = mappings
-            .filterKeys { it in 1..maxSignal }
-            .mapValues { (_, track) -> normalizeTrackKey(track) }
-            .filterValues { it.isNotBlank() }
-            .toSortedMap()
-            .entries
-            .joinToString(",") { "${it.key}:${it.value}" }
-
         prefs.edit()
-            .putString(keyFor(context), sanitized)
+            .putString(keyFor(context), serializeMappings(mappings, maxSignal))
             .apply()
     }
 
@@ -83,13 +76,8 @@ class SignalMappingStore(context: Context) {
             updatedLabels[signalIndex] = sanitizedLabel
         }
 
-        val serialized = updatedLabels
-            .toSortedMap()
-            .entries
-            .joinToString("\n") { "${it.key}:${it.value}" }
-
         prefs.edit()
-            .putString(labelKeyFor(context), serialized)
+            .putString(labelKeyFor(context), serializeLabels(updatedLabels))
             .apply()
     }
 
@@ -104,18 +92,40 @@ class SignalMappingStore(context: Context) {
             updatedVolumes[signalIndex] = sanitizedVolume
         }
 
-        val serialized = updatedVolumes
-            .toSortedMap()
-            .entries
-            .joinToString(",") { "${it.key}:${it.value}" }
-
         prefs.edit()
-            .putString(volumeKeyFor(context), serialized)
+            .putString(volumeKeyFor(context), serializeVolumes(updatedVolumes))
             .apply()
+    }
+
+    /** Chiavi di questo store che appartengono al progetto [deviceId]. */
+    fun projectSection(deviceId: String): ProjectPreferenceSection {
+        return ProjectPreferenceSection(PREFS_NAME, prefs) { key -> key.startsWith("$deviceId:") }
+    }
+
+    /**
+     * Sostituisce integralmente associazioni, etichette e volumi di tutte le serie del progetto
+     * con un unico commit sincrono; le chiavi di serie non elencate vengono eliminate.
+     */
+    fun replaceProject(deviceId: String, series: Map<PlaybackContext, SignalSeriesData>): Boolean {
+        val entries = linkedMapOf<String, Any?>()
+        series.forEach { (context, data) ->
+            require(context.deviceId == deviceId) { "Serie di un altro progetto: $context" }
+            serializeMappings(data.mappings, MAX_SIGNAL)
+                .takeIf { it.isNotEmpty() }
+                ?.let { entries[keyFor(context)] = it }
+            serializeLabels(data.labels.filterKeys { it in 1..MAX_SIGNAL })
+                .takeIf { it.isNotEmpty() }
+                ?.let { entries[labelKeyFor(context)] = it }
+            serializeVolumes(data.volumes.filterKeys { it in 1..MAX_SIGNAL })
+                .takeIf { it.isNotEmpty() }
+                ?.let { entries[volumeKeyFor(context)] = it }
+        }
+        return projectSection(deviceId).replaceAll(entries)
     }
 
     companion object {
         private const val PREFS_NAME = "historia_signal_mapping_prefs"
+        const val MAX_SIGNAL = ProjectSettingsStore.MAX_TRACK_COUNT
 
         fun defaultMapping(maxSignal: Int): Map<Int, String> {
             return (1..maxSignal.coerceAtLeast(1)).associateWith { DEFAULT_TRACK_KEY }
@@ -129,6 +139,48 @@ class SignalMappingStore(context: Context) {
             } else {
                 trimmed
             }
+        }
+
+        private fun parseMappings(stored: String?): Map<Int, String> {
+            return stored
+                ?.split(",")
+                .orEmpty()
+                .mapNotNull { entry ->
+                    val signal = entry.substringBefore(":", missingDelimiterValue = "").toIntOrNull()
+                    val track = entry.substringAfter(":", missingDelimiterValue = "")
+                        .takeIf { it.isNotBlank() }
+                        ?.let { normalizeTrackKey(it) }
+                    if (signal == null || track == null) null else signal to track
+                }
+                .toMap()
+        }
+
+        private fun serializeMappings(mappings: Map<Int, String>, maxSignal: Int): String {
+            return mappings
+                .filterKeys { it in 1..maxSignal }
+                .mapValues { (_, track) -> normalizeTrackKey(track) }
+                .filterValues { it.isNotBlank() }
+                .toSortedMap()
+                .entries
+                .joinToString(",") { "${it.key}:${it.value}" }
+        }
+
+        private fun serializeLabels(labels: Map<Int, String>): String {
+            return labels
+                .mapValues { (_, label) -> label.replace(LINE_BREAKS, " ").trim() }
+                .filterValues { it.isNotBlank() }
+                .toSortedMap()
+                .entries
+                .joinToString("\n") { "${it.key}:${it.value}" }
+        }
+
+        private fun serializeVolumes(volumes: Map<Int, Int>): String {
+            return volumes
+                .mapValues { (_, volume) -> volume.coerceIn(MIN_VOLUME_PERCENT, MAX_VOLUME_PERCENT) }
+                .filterValues { it != MAX_VOLUME_PERCENT }
+                .toSortedMap()
+                .entries
+                .joinToString(",") { "${it.key}:${it.value}" }
         }
 
         private fun keyFor(context: PlaybackContext): String {
@@ -146,5 +198,6 @@ class SignalMappingStore(context: Context) {
         private const val DEFAULT_TRACK_KEY = "00.mp3"
         private const val MIN_VOLUME_PERCENT = 10
         private const val MAX_VOLUME_PERCENT = 100
+        private val LINE_BREAKS = Regex("[\\r\\n]+")
     }
 }

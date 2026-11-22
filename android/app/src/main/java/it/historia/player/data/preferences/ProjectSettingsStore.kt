@@ -76,29 +76,43 @@ class ProjectSettingsStore(context: Context) {
     }
 
     fun save(deviceId: String, settings: ProjectSettings) {
-        val prefix = keyPrefix(deviceId)
         val editor = prefs.edit()
-            .putString("$prefix.name", settings.culturalAssetName)
-            .putString("$prefix.school", settings.schoolName)
-            .putInt("$prefix.track_count", settings.trackCount.coerceIn(MIN_TRACK_COUNT, MAX_TRACK_COUNT))
-            .putStringSet("$prefix.custom_profiles", settings.customProfiles)
-            .putStringSet("$prefix.enabled_series", settings.enabledSeries)
+        entriesFor(deviceId, settings).forEach { (key, value) -> editor.putTyped(key, value) }
+        editor.commit()
+    }
 
+    /** Chiavi di questo store che appartengono al progetto [deviceId]. */
+    fun projectSection(deviceId: String): ProjectPreferenceSection {
+        val prefix = "${keyPrefix(deviceId)}."
+        return ProjectPreferenceSection(PREFS_NAME, prefs) { key -> key.startsWith(prefix) }
+    }
+
+    /** Sostituisce integralmente le impostazioni del progetto, eliminando eventuali residui. */
+    fun replaceProject(deviceId: String, settings: ProjectSettings): Boolean {
+        return projectSection(deviceId).replaceAll(entriesFor(deviceId, settings))
+    }
+
+    private fun entriesFor(deviceId: String, settings: ProjectSettings): Map<String, Any?> {
+        val prefix = keyPrefix(deviceId)
+        val entries = linkedMapOf<String, Any?>(
+            "$prefix.name" to settings.culturalAssetName,
+            "$prefix.school" to settings.schoolName,
+            "$prefix.track_count" to settings.trackCount.coerceIn(MIN_TRACK_COUNT, MAX_TRACK_COUNT),
+            "$prefix.custom_profiles" to settings.customProfiles,
+            "$prefix.enabled_series" to settings.enabledSeries
+        )
         val profileIds = settings.profileLabels.keys + settings.customLanguagesByProfile.keys
         profileIds.forEach { profileId ->
-            editor.putStringSet(
-                "$prefix.profile_languages.$profileId",
+            entries["$prefix.profile_languages.$profileId"] =
                 settings.customLanguagesByProfile[profileId].orEmpty()
-            )
         }
         settings.profileLabels.forEach { (profileId, label) ->
-            editor.putString("$prefix.profile.$profileId", label)
+            entries["$prefix.profile.$profileId"] = label
         }
         settings.languageLabels.forEach { (language, label) ->
-            editor.putString("$prefix.language.$language", label)
+            entries["$prefix.language.$language"] = label
         }
-
-        editor.commit()
+        return entries
     }
 
     fun reset(device: DeviceDefinition) {
@@ -131,6 +145,27 @@ class ProjectSettingsStore(context: Context) {
 
         fun seriesKey(profileId: String, language: String): String {
             return "$profileId:$language"
+        }
+
+        /**
+         * Tutte le serie (tipologia, lingua) del progetto, attive o meno, nell'ordine dell'app:
+         * prima le tipologie predefinite con le loro lingue, poi quelle personalizzate.
+         */
+        fun projectSeries(device: DeviceDefinition, settings: ProjectSettings): List<Pair<String, String>> {
+            val builtIn = device.profiles.flatMap { profile ->
+                (profile.languages + settings.customLanguagesByProfile[profile.profileId].orEmpty().sorted())
+                    .distinct()
+                    .map { language -> profile.profileId to language }
+            }
+            val custom = settings.customProfiles
+                .filter { profileId -> device.profiles.none { it.profileId == profileId } }
+                .sorted()
+                .flatMap { profileId ->
+                    settings.customLanguagesByProfile[profileId].orEmpty().sorted().map { language ->
+                        profileId to language
+                    }
+                }
+            return builtIn + custom
         }
 
         fun defaultProfileLabel(profileId: String): String {

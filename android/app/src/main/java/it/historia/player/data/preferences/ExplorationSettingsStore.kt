@@ -51,6 +51,33 @@ class ExplorationSettingsStore(context: Context) {
         editor.apply()
     }
 
+    /** Chiavi di questo store che appartengono al progetto [deviceId]. */
+    fun projectSection(deviceId: String): ProjectPreferenceSection {
+        val timeoutKey = timeoutKey(deviceId)
+        val seriesPrefix = "series.$deviceId:"
+        return ProjectPreferenceSection(PREFS_NAME, prefs) { key ->
+            key == timeoutKey || key.startsWith(seriesPrefix)
+        }
+    }
+
+    /** Sostituisce timeout e tracce introduttive di tutte le serie del progetto con un unico commit. */
+    fun replaceProject(
+        deviceId: String,
+        settings: ExplorationSettings,
+        trackSettings: Map<PlaybackContext, ExplorationTrackSettings>
+    ): Boolean {
+        val entries = linkedMapOf<String, Any?>(
+            timeoutKey(deviceId) to settings.timeoutMinutes.coerceIn(MIN_TIMEOUT_MINUTES, MAX_TIMEOUT_MINUTES)
+        )
+        trackSettings.forEach { (context, track) ->
+            require(context.deviceId == deviceId) { "Serie di un altro progetto: $context" }
+            val prefix = trackKeyPrefix(context)
+            entries["$prefix.use_default_track"] = track.useDefaultTrack
+            track.customTrackKey?.takeIf { it.isNotBlank() }?.let { entries["$prefix.custom_track_key"] = it }
+        }
+        return projectSection(deviceId).replaceAll(entries)
+    }
+
     private fun timeoutKey(deviceId: String): String = "exploration_timeout:$deviceId"
 
     private fun trackKeyPrefix(context: PlaybackContext): String {

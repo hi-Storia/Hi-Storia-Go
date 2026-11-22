@@ -29,6 +29,7 @@ Use this repository as a working public alpha, not as a final production release
 - Optional presentation track from the player home.
 - Optional background music with ducking under spoken tracks.
 - Admin area with board diagnostics and smartphone diagnostics.
+- Project export/import as a single `.historia.zip` archive to move a whole project (settings, mappings and audio) to another phone. See [docs/project-transfer.md](docs/project-transfer.md).
 - Designed for unattended or semi-attended use on reused Android phones.
 
 ## Repository Layout
