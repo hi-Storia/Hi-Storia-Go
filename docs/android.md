@@ -77,6 +77,6 @@ This is not yet a Play Store ready release. Before production use:
 - complete long-running hardware tests;
 - verify USB stability on target phones;
 - replace placeholder/default audio where needed;
-- decide signing and distribution strategy;
+- configure the release signing key and publish through GitHub Releases (see [release.md](release.md));
 - review privacy policy and permissions.
 

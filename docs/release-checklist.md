@@ -15,8 +15,11 @@ Before publishing a public release:
 - [ ] Test audio import from local storage.
 - [ ] Test all activators.
 - [ ] Run at least a one-hour stability test on the target phone and board.
-- [ ] Decide Android signing strategy.
-- [ ] Decide whether the release is GitHub-only, APK download, F-Droid candidate or Play Store candidate.
+- [ ] Increment `versionCode` and update `versionName` in `android/app/build.gradle.kts`.
+- [ ] Release signing secrets configured in the `release` environment (see `docs/release.md`); keystore backed up outside the repository.
+- [ ] Optional dry run: *Actions → Release APK → Run workflow* and install the artifact on a test phone.
+- [ ] Push tag `v<versionName>` and check the GitHub Release page (APK, `.sha256`, notes).
+- [ ] Install the published APK on a phone without developer mode / USB debugging and run a quick smoke test.
 
 Current maturity:
 

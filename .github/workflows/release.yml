@@ -1,0 +1,157 @@
+name: Release APK
+
+# Pubblica un APK firmato su GitHub Releases quando viene pushato un tag `vX.Y.Z[-suffisso]`
+# uguale a `v` + versionName di android/app/build.gradle.kts (vedi docs/release.md).
+# Avvio manuale (workflow_dispatch): costruisce e firma l'APK come artifact, senza pubblicare.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Environment GitHub: permette di limitare chi può usare i secrets di firma.
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Check signing secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          missing=0
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name non configurato (Settings > Environments > release)."
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Decode keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          umask 077
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/historia-release.jks"
+
+      - name: Make Gradle executable
+        run: chmod +x gradlew
+        working-directory: android
+
+      - name: Run unit tests
+        run: ./gradlew :app:testDebugUnitTest
+        working-directory: android
+
+      - name: Build signed release APK
+        env:
+          HISTORIA_KEYSTORE_FILE: ${{ runner.temp }}/historia-release.jks
+          HISTORIA_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          HISTORIA_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          HISTORIA_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease -Phistoria.requireReleaseSigning=true --no-configuration-cache
+        working-directory: android
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/historia-release.jks"
+
+      - name: Verify signature and version
+        id: apk
+        run: |
+          set -euo pipefail
+          OUT=android/app/build/outputs/apk/release
+          APK="$OUT/app-release.apk"
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee apksigner.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" apksigner.txt
+
+          VERSION_NAME=$(jq -r '.elements[0].versionName' "$OUT/output-metadata.json")
+          VERSION_CODE=$(jq -r '.elements[0].versionCode' "$OUT/output-metadata.json")
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "v${VERSION_NAME}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Il tag ${GITHUB_REF_NAME} non corrisponde a versionName ${VERSION_NAME}."
+            exit 1
+          fi
+
+          mkdir -p dist
+          FILE="HiStoriaGo-${VERSION_NAME}.apk"
+          cp "$APK" "dist/$FILE"
+          (cd dist && sha256sum "$FILE" > "$FILE.sha256")
+          CERT_SHA256=$(grep -m1 "certificate SHA-256 digest" apksigner.txt | awk '{print $NF}')
+          {
+            echo "version_name=$VERSION_NAME"
+            echo "version_code=$VERSION_CODE"
+            echo "file=$FILE"
+            echo "apk_sha256=$(cut -d' ' -f1 "dist/$FILE.sha256")"
+            echo "cert_sha256=$CERT_SHA256"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HiStoriaGo-${{ steps.apk.outputs.version_name }}
+          path: dist/
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_NAME: ${{ steps.apk.outputs.version_name }}
+          VERSION_CODE: ${{ steps.apk.outputs.version_code }}
+          FILE: ${{ steps.apk.outputs.file }}
+          APK_SHA256: ${{ steps.apk.outputs.apk_sha256 }}
+          CERT_SHA256: ${{ steps.apk.outputs.cert_sha256 }}
+        run: |
+          set -euo pipefail
+          cat > notes.md <<EOF
+          ## Hi-Storia Go ${VERSION_NAME}
+
+          **Download:** \`${FILE}\` (in *Assets*, qui sotto).
+
+          ### Installazione su smartphone Android (8.0 o successivo)
+          Non servono modalità sviluppatore né debug USB.
+          1. Apri questa pagina dal browser dello smartphone e tocca \`${FILE}\`.
+          2. Apri il file scaricato. Se richiesto, consenti a browser o app File di *installare app sconosciute* e torna indietro.
+          3. Tocca **Installa**. Se Play Protect avvisa che l'app è sconosciuta, scegli *Altri dettagli → Installa comunque*.
+
+          Gli aggiornamenti si installano sopra la versione precedente mantenendo i dati.
+          Se sullo smartphone c'è una build di sviluppo (debug) va prima disinstallata: esporta il progetto
+          (*Progetto → Esporta progetto*), disinstalla, installa questo APK e reimporta il progetto.
+
+          ### Verifica
+          - versionCode: ${VERSION_CODE}
+          - SHA-256 APK: \`${APK_SHA256}\`
+          - SHA-256 certificato di firma: \`${CERT_SHA256}\`
+
+          Guida completa: [docs/release.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/release.md)
+          EOF
+
+          PRERELEASE=""
+          case "$VERSION_NAME" in *-*) PRERELEASE="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" "dist/$FILE" "dist/$FILE.sha256" \
+            --verify-tag \
+            --title "Hi-Storia Go ${VERSION_NAME}" \
+            --notes-file notes.md \
+            $PRERELEASE

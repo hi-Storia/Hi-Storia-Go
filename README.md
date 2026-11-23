@@ -17,6 +17,10 @@ The core Android player, USB serial protocol, project editor, audio import, expl
 
 Use this repository as a working public alpha, not as a final production release.
 
+## Download
+
+Signed APKs are published on [GitHub Releases](https://github.com/hi-Storia/Hi-Storia-Go/releases): open the page from the phone, download `HiStoriaGo-<version>.apk` and install it (Android 8.0+, no developer mode or USB debugging needed). Installation, update and release steps are in [docs/release.md](docs/release.md).
+
 ## Features
 
 - USB serial connection to an Arduino/hi-Storia tactile board.
